@@ -1,0 +1,86 @@
+# Reusable Trivy filesystem (dependency) scan: SARIF for GHAS or table to job summary.
+# Gate in the calling workflow with if: when the scan should run.
+# When advanced-security is "true", pass github-token for SARIF upload to the Security tab.
+name: Trivy FS scan
+description: Run Trivy filesystem scan and optionally upload SARIF or post table to job summary
+
+inputs:
+  scan-ref:
+    description: Path to scan (e.g. services/app or .)
+    required: true
+  project-name:
+    description: Project name for summary and SARIF category
+    required: true
+  advanced-security:
+    description: 'When "true", output SARIF and upload; otherwise table to job summary'
+    required: false
+    default: "false"
+  severity:
+    description: Severity filter (comma-separated)
+    required: false
+    default: "CRITICAL,HIGH"
+  cache:
+    description: Use Trivy cache
+    required: false
+    default: "true"
+  github-token:
+    description: 'Token for SARIF upload (e.g. secrets.GITHUB_TOKEN). Pass when advanced-security is true.'
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy FS scan (SARIF)
+      if: inputs.advanced-security == 'true'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: "fs"
+        scan-ref: ${{ inputs.scan-ref }}
+        format: "sarif"
+        output: "trivy-fs.sarif"
+        severity: ${{ inputs.severity }}
+        exit-code: "0"
+        cache: ${{ inputs.cache }}
+
+    - name: Trivy FS scan (table)
+      if: inputs.advanced-security != 'true'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: "fs"
+        scan-ref: ${{ inputs.scan-ref }}
+        format: "table"
+        output: "trivy-fs.txt"
+        severity: ${{ inputs.severity }}
+        exit-code: "0"
+        cache: ${{ inputs.cache }}
+
+    - name: Post Trivy FS to job summary
+      if: inputs.advanced-security != 'true'
+      shell: bash
+      run: |
+        {
+          echo "### Trivy FS (dependencies) – ${{ inputs.project-name }}"
+          echo ""
+          if [[ -s trivy-fs.txt ]]; then
+            echo "<details><summary>Click to expand</summary>"
+            echo ""
+            echo '```'
+            cat trivy-fs.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          else
+            echo "No CRITICAL/HIGH findings."
+          fi
+          echo ""
+        } >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload Trivy FS SARIF
+      if: inputs.advanced-security == 'true' && inputs.github-token != ''
+      uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+      continue-on-error: true
+      with:
+        sarif_file: "trivy-fs.sarif"
+        category: "trivy-fs-${{ inputs.project-name }}"
+        token: ${{ inputs.github-token }}

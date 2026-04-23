@@ -1,0 +1,102 @@
+# Reusable Trivy container image scan: SARIF for GHAS or table to job summary.
+# Call only when image scanning is enabled (gate in workflow with if:).
+# ADVANCED_SECURITY selects SARIF upload vs table in job summary; formats can include cosign-vuln.
+name: Trivy image scan
+description: Run Trivy container image scan and optionally upload SARIF or post table to job summary
+
+inputs:
+  image-ref:
+    description: Full image reference (e.g. ghcr.io/org/repo/api:latest)
+    required: true
+  project-name:
+    description: Project name for summary and SARIF category
+    required: true
+  advanced-security:
+    description: 'When "true", output SARIF and upload; otherwise table to job summary'
+    required: false
+    default: "false"
+  formats:
+    description: Comma-separated formats (e.g. table,cosign-vuln or sarif,table,cosign-vuln)
+    required: false
+    default: "table,cosign-vuln"
+  severity:
+    description: Severity filter (comma-separated)
+    required: false
+    default: "CRITICAL,HIGH"
+  cache:
+    description: Use Trivy cache
+    required: false
+    default: "true"
+  github-token:
+    description: 'Token for SARIF upload (e.g. secrets.GITHUB_TOKEN). Pass from workflow when advanced-security is true.'
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy image scan (SARIF)
+      if: inputs.advanced-security == 'true'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: "image"
+        scan-ref: ${{ inputs.image-ref }}
+        format: "sarif"
+        output: "trivy-image.sarif"
+        severity: ${{ inputs.severity }}
+        exit-code: "0"
+        cache: ${{ inputs.cache }}
+
+    - name: Trivy image scan (table)
+      if: inputs.advanced-security != 'true'
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: "image"
+        scan-ref: ${{ inputs.image-ref }}
+        format: "table"
+        output: "trivy-image.txt"
+        severity: ${{ inputs.severity }}
+        exit-code: "0"
+        cache: ${{ inputs.cache }}
+
+    - name: Trivy image scan (cosign-vuln)
+      if: contains(inputs.formats, 'cosign-vuln')
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: "image"
+        scan-ref: ${{ inputs.image-ref }}
+        format: "cosign-vuln"
+        output: "trivy-image-cosign-vuln.json"
+        severity: ${{ inputs.severity }}
+        exit-code: "0"
+        cache: ${{ inputs.cache }}
+
+    - name: Post Trivy image to job summary
+      if: inputs.advanced-security != 'true'
+      shell: bash
+      run: |
+        {
+          echo "### Trivy image – ${{ inputs.project-name }}"
+          echo ""
+          if [[ -s trivy-image.txt ]]; then
+            echo "<details><summary>Click to expand</summary>"
+            echo ""
+            echo '```'
+            cat trivy-image.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          else
+            echo "No CRITICAL/HIGH findings."
+          fi
+          echo ""
+        } >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload Trivy image SARIF
+      if: inputs.advanced-security == 'true' && inputs.github-token != ''
+      uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+      continue-on-error: true
+      with:
+        sarif_file: "trivy-image.sarif"
+        category: "trivy-image-${{ inputs.project-name }}"
+        token: ${{ inputs.github-token }}
