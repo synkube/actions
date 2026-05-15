@@ -10,12 +10,12 @@ Reusable GitHub Actions for the synkube organization.
 
 ## Usage
 
-Reference an action with the repo path and a git ref (branch, tag, or full commit SHA), for example:
+Org convention: **`uses`** is pinned to the **full commit SHA** of this repo; the **release tag** (e.g. **`v1.0.0`**) appears **only in the trailing comment** so reviewers know which release line you intend.
 
 ```yaml
-- uses: synkube/actions/.github/actions/kics-github-action@main
+- uses: synkube/actions/.github/actions/kics-github-action@9f425ac79ec75ce388b4e27528784a095a272584 # v1.0.0
   with:
     path: terraform
 ```
 
-Prefer pinning the repository at a full commit SHA for maximum reproducibility, consistent with the rest of your supply-chain hardening.
+When you cut a new release, bump the SHA to the commit that tag points at and update the comment (e.g. `# v1.0.1`).
