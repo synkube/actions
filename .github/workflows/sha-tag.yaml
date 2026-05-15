@@ -1,0 +1,58 @@
+name: sha-tag
+
+on:
+  workflow_call:
+    inputs:
+      checkout_repository:
+        description: Repository to checkout (owner/name). Empty uses the caller repository.
+        type: string
+        default: ""
+      checkout_ref:
+        description: >
+          Ref to checkout (branch, tag, or SHA). When empty, uses the calling workflow's commit SHA.
+        type: string
+        default: ""
+      tag_fallback:
+        description: Base version used when the repository has no tags
+        type: string
+        default: "1.0.0"
+    outputs:
+      tag:
+        description: Composite tag (latest semver tag + short SHA)
+        value: ${{ jobs.sha_tag.outputs.sha_tag }}
+      base_tag:
+        description: Release-style tag used as the base for the composite tag
+        value: ${{ jobs.sha_tag.outputs.base_tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  sha_tag:
+    runs-on: ubuntu-latest
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+      base_tag: ${{ steps.meta.outputs.base_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Resolve base tag and SHA suffix tag
+        id: meta
+        env:
+          TAG_FALLBACK: ${{ inputs.tag_fallback }}
+        run: |
+          set -euo pipefail
+          sha_short="$(git rev-parse --short HEAD)"
+          base="$(git tag -l --sort=-v:refname | head -n1)"
+          if [ -z "${base}" ]; then
+            base="${TAG_FALLBACK}"
+          fi
+          {
+            echo "base_tag=${base}"
+            echo "sha_tag=${base}-${sha_short}"
+          } >> "${GITHUB_OUTPUT}"
