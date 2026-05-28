@@ -77,6 +77,9 @@ report_failure() {
   local detail="${1}"
   echo "::error::jwt-exchange failed: ${detail}"
   echo "Source: ${SOURCE_REPO:-unknown} → Target: ${TARGET_REPO} (HTTP ${HTTP_CODE:-?}, profile ${EXCHANGE_PROFILE:-default})"
+  if [[ "${HTTP_CODE:-}" == "404" ]]; then
+    echo "Hint: HTTP 404 on exchange usually means the jwt-exchange GitHub App is not installed on ${TARGET_REPO}."
+  fi
   [[ -n "${POLICY_DOCS_URL:-}" ]] && echo "Fix: review policy at ${POLICY_DOCS_URL}"
 }
 
