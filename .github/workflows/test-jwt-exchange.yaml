@@ -1,0 +1,66 @@
+name: Test jwt-exchange action
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/actions/jwt-exchange/**"
+      - ".github/workflows/test-jwt-exchange.yaml"
+  push:
+    paths:
+      - ".github/actions/jwt-exchange/**"
+      - ".github/workflows/test-jwt-exchange.yaml"
+
+# Requires an OPA policy mapping in synkube/jwt-exchange:
+# policy/policy.rego policy_mappings → ["synkube/actions", "synkube/actions", "read_only", "gha_ci_triggers"]
+env:
+  JWT_EXCHANGE_BASE_URL: https://jwt-exchange.synkube.com
+  SMOKE_TARGET_REPO: synkube/actions
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # id-token: write so the action can fetch an Actions OIDC token to exchange.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Lint exchange.sh
+        run: |
+          bash -n .github/actions/jwt-exchange/exchange.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck .github/actions/jwt-exchange/exchange.sh
+
+      # Skip live exchange on PRs from forks (no OIDC + no policy match anyway);
+      # lint above still runs for every PR.
+      - name: Exchange OIDC against deployed jwt-exchange
+        id: token
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/jwt-exchange
+        with:
+          jwt_exchange_url: ${{ env.JWT_EXCHANGE_BASE_URL }}
+          target_repo: ${{ env.SMOKE_TARGET_REPO }}
+          requested_permissions: >-
+            {"contents":"read","metadata":"read"}
+
+      - name: Assert outputs and use installation token
+        if: steps.token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PERMISSIONS: ${{ steps.token.outputs.permissions }}
+          EXPIRES_AT: ${{ steps.token.outputs.expires_at }}
+          ISSUED_TOKEN_TYPE: ${{ steps.token.outputs.issued_token_type }}
+          EXCHANGE_PROFILE: ${{ steps.token.outputs.exchange_profile }}
+        run: |
+          set -euo pipefail
+          echo "permissions       : ${PERMISSIONS}"
+          echo "expires_at        : ${EXPIRES_AT}"
+          echo "issued_token_type : ${ISSUED_TOKEN_TYPE}"
+          echo "exchange_profile  : ${EXCHANGE_PROFILE}"
+          [[ "${ISSUED_TOKEN_TYPE}" == "urn:github:installation_access_token" ]]
+          [[ -n "${EXPIRES_AT}" ]]
+          jq -e '.contents == "read" and .metadata == "read"' <<<"${PERMISSIONS}" >/dev/null
+          gh api "repos/${SMOKE_TARGET_REPO}" --jq '.full_name'

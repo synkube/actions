@@ -6,7 +6,10 @@ Reusable GitHub Actions for the synkube organization.
 
 | Path | Description |
 | --- | --- |
+| [.github/actions/jwt-exchange](.github/actions/jwt-exchange) | Exchange GitHub Actions OIDC for a short-lived GitHub App installation token via [synkube/jwt-exchange](https://github.com/synkube/jwt-exchange) (`/api/v2/exchange/token`, bash composite) |
 | [.github/actions/kics-github-action](.github/actions/kics-github-action) | [KICS](https://kics.io/) static analysis for Infrastructure as Code (fork of [Checkmarx/kics-github-action](https://github.com/Checkmarx/kics-github-action) with a digest-pinned KICS engine image) |
+| [.github/actions/trivy-fs](.github/actions/trivy-fs) | Trivy filesystem (dependency) scan with optional SARIF upload to GHAS |
+| [.github/actions/trivy-image](.github/actions/trivy-image) | Trivy container image scan with optional SARIF upload to GHAS |
 
 ## Usage
 

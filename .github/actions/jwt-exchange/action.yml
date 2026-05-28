@@ -1,0 +1,104 @@
+# Exchange GitHub OIDC for a credential via synkube jwt-exchange.
+#
+# Prerequisites:
+#   - Caller job permissions: { id-token: write, contents: read } (minimum)
+#   - OPA policy mapping in jwt-exchange for this source workflow → target_repo
+#     (see https://github.com/synkube/jwt-exchange/blob/main/policy/policy.rego)
+#
+# Common failures:
+#   - HTTP 403 (status=fail) → policy did not match source repo / target / ref / event
+#   - Empty token in response → policy denied or service error (see message in logs)
+#   - HTTP 400 → request schema invalid (target_repo not owner/repo, bad permissions)
+
+name: jwt-exchange
+description: >-
+  Obtain a GitHub OIDC token and exchange it for a GitHub App installation
+  token via the synkube jwt-exchange service (v2 API, bash composite — no Node runtime).
+
+inputs:
+  jwt_exchange_url:
+    description: Base URL of the jwt-exchange service (no trailing slash, e.g. https://jwt-exchange.synkube.com)
+    required: true
+  target_repo:
+    description: Target repository in `owner/repo` format
+    required: true
+  requested_permissions:
+    description: >-
+      JSON object of GitHub permissions to request, e.g.
+      {"contents":"write","pull_requests":"write"}.
+      Sent under `requested.github_permissions` in the v2 request body.
+    required: true
+  exchange_profile:
+    description: >-
+      Profile id registered in jwt-exchange. Defaults to the service default
+      (`github_actions_to_installation`); pass empty to omit and let the service decide.
+    required: false
+    default: github_actions_to_installation
+  audience:
+    description: OIDC audience requested from the GitHub id-token endpoint
+    required: false
+    default: api://jwt-exchange
+  source_repo:
+    description: Source repository shown in error messages (defaults to github.repository)
+    required: false
+    default: ""
+  policy_docs_url:
+    description: URL shown when exchange is denied by policy (optional)
+    required: false
+    default: https://github.com/synkube/jwt-exchange/blob/main/policy/policy.rego
+  max_attempts:
+    description: >-
+      Total attempts on transient errors (curl network/timeout, HTTP 5xx).
+      4xx responses are NOT retried — policy/validation are deterministic.
+    required: false
+    default: "2"
+  connect_timeout:
+    description: curl --connect-timeout (seconds) for OIDC + exchange calls
+    required: false
+    default: "10"
+  max_time:
+    description: curl --max-time (seconds, total request budget per attempt)
+    required: false
+    default: "30"
+  retry_delay:
+    description: Seconds to wait between transient-failure retries
+    required: false
+    default: "3"
+
+outputs:
+  token:
+    description: GitHub App installation access token (masked)
+    value: ${{ steps.exchange.outputs.token }}
+  permissions:
+    description: Permissions granted by jwt-exchange (JSON object)
+    value: ${{ steps.exchange.outputs.permissions }}
+  expires_at:
+    description: Token expiration timestamp (RFC 3339) from jwt-exchange
+    value: ${{ steps.exchange.outputs.expires_at }}
+  issued_token_type:
+    description: Issued token type URN (e.g. urn:github:installation_access_token)
+    value: ${{ steps.exchange.outputs.issued_token_type }}
+  exchange_profile:
+    description: Profile id that produced the token (echoed by the service)
+    value: ${{ steps.exchange.outputs.exchange_profile }}
+
+runs:
+  using: composite
+  steps:
+    - name: Exchange OIDC for installation token
+      id: exchange
+      shell: bash
+      env:
+        JWT_EXCHANGE_URL: ${{ inputs.jwt_exchange_url }}
+        TARGET_REPO: ${{ inputs.target_repo }}
+        REQUESTED_PERMISSIONS: ${{ inputs.requested_permissions }}
+        EXCHANGE_PROFILE: ${{ inputs.exchange_profile }}
+        AUDIENCE: ${{ inputs.audience }}
+        SOURCE_REPO: ${{ inputs.source_repo }}
+        POLICY_DOCS_URL: ${{ inputs.policy_docs_url }}
+        MAX_ATTEMPTS: ${{ inputs.max_attempts }}
+        CONNECT_TIMEOUT: ${{ inputs.connect_timeout }}
+        MAX_TIME: ${{ inputs.max_time }}
+        RETRY_DELAY: ${{ inputs.retry_delay }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: ${{ github.action_path }}/exchange.sh
