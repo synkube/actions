@@ -73,14 +73,24 @@ PAYLOAD="$(
      + (if $exchange_profile == "" then {} else {exchange_profile: $exchange_profile} end)'
 )"
 
-report_failure() {
+enrich_failure_message() {
   local detail="${1}"
-  echo "::error::jwt-exchange failed: ${detail}"
-  echo "Source: ${SOURCE_REPO:-unknown} → Target: ${TARGET_REPO} (HTTP ${HTTP_CODE:-?}, profile ${EXCHANGE_PROFILE:-default})"
   if [[ "${HTTP_CODE:-}" == "404" ]]; then
-    echo "Hint: HTTP 404 on exchange usually means the jwt-exchange GitHub App is not installed on ${TARGET_REPO}."
+    if [[ -z "${detail}" || "${detail}" == "Not Found" || "${detail}" == *"GitHub resource not found"* ]]; then
+      detail="GitHub App is not installed on ${TARGET_REPO}. Install the jwt-exchange GitHub App on the target repository or organization."
+    elif [[ "${detail}" != *"not installed"* ]]; then
+      detail="${detail} GitHub App may not be installed on ${TARGET_REPO}."
+    fi
+  elif [[ "${HTTP_CODE:-}" == "403" && -n "${POLICY_DOCS_URL:-}" && "${detail}" != *"${POLICY_DOCS_URL}"* ]]; then
+    detail="${detail} Review policy at ${POLICY_DOCS_URL}."
   fi
-  [[ -n "${POLICY_DOCS_URL:-}" ]] && echo "Fix: review policy at ${POLICY_DOCS_URL}"
+  printf '%s' "${detail}"
+}
+
+report_failure() {
+  local detail
+  detail="$(enrich_failure_message "${1}")"
+  echo "::error::jwt-exchange failed: ${detail} (source ${SOURCE_REPO:-unknown} → target ${TARGET_REPO}, HTTP ${HTTP_CODE:-?}, profile ${EXCHANGE_PROFILE:-default})"
 }
 
 attempt=0
