@@ -1,0 +1,75 @@
+name: Test gitops-bump action
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/actions/gitops-bump/**"
+      - ".github/workflows/test-gitops-bump.yaml"
+  push:
+    paths:
+      - ".github/actions/gitops-bump/**"
+      - ".github/workflows/test-gitops-bump.yaml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Lint gitops-bump scripts
+        run: |
+          bash -n .github/actions/gitops-bump/update-managed-values.sh
+          bash -n .github/actions/gitops-bump/submit-gitops-change.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck .github/actions/gitops-bump/update-managed-values.sh
+          shellcheck .github/actions/gitops-bump/submit-gitops-change.sh
+
+      - name: PR branch name helper
+        run: |
+          branch="$(./.github/actions/gitops-bump/submit-gitops-change.sh --print-pr-branch gitops/bump service.tag 0.0.9)"
+          [[ "${branch}" == "gitops/bump/service-tag/0.0.9" ]]
+          family="$(./.github/actions/gitops-bump/submit-gitops-change.sh --print-pr-family gitops/bump service.tag)"
+          [[ "${family}" == "gitops/bump/service-tag" ]]
+
+      - name: Superseded PR selection (jq filter)
+        run: |
+          json='[
+            {"number":10,"headRefName":"gitops/bump/service-tag/0.0.8"},
+            {"number":11,"headRefName":"gitops/bump/service-tag/0.0.9"},
+            {"number":12,"headRefName":"gitops/bump/opa-image/0.0.8"}
+          ]'
+          stale="$(printf '%s' "${json}" | jq -r --arg family "gitops/bump/service-tag/" --arg keep "gitops/bump/service-tag/0.0.9" \
+            '.[] | select(.headRefName | startswith($family)) | select(.headRefName != $keep) | .number | tostring')"
+          [[ "${stale}" == "10" ]]
+
+      - name: Prepare fixture values file
+        run: |
+          cat > /tmp/jwt-exchange-values.yaml <<'YAML'
+          image:
+            repository: ghcr.io/synkube/jwt-exchange/service
+            tag: "0.0.1" # github-workflow-managed:service.tag
+          extraContainers:
+            - name: opa
+              image: ghcr.io/synkube/jwt-exchange/opa:0.0.1 # github-workflow-managed:opa.image
+          YAML
+
+      - name: Bump service.tag
+        run: |
+          ./.github/actions/gitops-bump/update-managed-values.sh \
+            /tmp/jwt-exchange-values.yaml service.tag 0.0.9
+          grep -F 'tag: "0.0.9" # github-workflow-managed:service.tag' /tmp/jwt-exchange-values.yaml
+
+      - name: Bump opa.image
+        run: |
+          ./.github/actions/gitops-bump/update-managed-values.sh \
+            /tmp/jwt-exchange-values.yaml opa.image 0.0.8
+          grep -F 'image: ghcr.io/synkube/jwt-exchange/opa:0.0.8 # github-workflow-managed:opa.image' /tmp/jwt-exchange-values.yaml
+
+      - name: Rejects unknown managed key
+        run: |
+          set +e
+          ./.github/actions/gitops-bump/update-managed-values.sh \
+            /tmp/jwt-exchange-values.yaml missing.key 1.0.0
+          [[ $? -ne 0 ]]

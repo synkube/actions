@@ -1,0 +1,136 @@
+# Bump workflow-managed Helm values in a GitOps repo and push or open a pull request.
+#
+# Prerequisites:
+#   - Caller supplies a GitHub token with contents:write on gitops_repo
+#     (typically from synkube/actions jwt-exchange composite).
+#   - pull_request delivery also needs pull_requests:write on gitops_repo.
+#   - Target YAML lines use:  tag: "x.y.z" # github-workflow-managed:<key>
+#     or image: registry/repo:tag # github-workflow-managed:<key>
+
+name: gitops-bump
+description: >-
+  Update a # github-workflow-managed value in a GitOps values file, then push to a branch or open a PR.
+
+inputs:
+  token:
+    description: GitHub token with contents:write on gitops_repo (and pull_requests:write when delivery=pull_request)
+    required: true
+  gitops_repo:
+    description: GitOps repository in owner/repo format
+    required: true
+  values_path:
+    description: Path to the values file inside gitops_repo (e.g. values/claw/prod/workloads/jwt-exchange.yaml)
+    required: true
+  managed_key:
+    description: Marker key matching # github-workflow-managed:<key> on the target line
+    required: true
+  version:
+    description: New version/tag value to write
+    required: true
+  delivery:
+    description: push (commit to branch) or pull_request (push head branch and open/reuse a PR)
+    required: false
+    default: push
+  branch:
+    description: Push target branch (delivery=push) or PR base branch (delivery=pull_request)
+    required: false
+    default: main
+  pr_branch_prefix:
+    description: Prefix for generated PR head branches (delivery=pull_request)
+    required: false
+    default: gitops/bump
+  pr_title:
+    description: Pull request title (delivery=pull_request; defaults to commit message)
+    required: false
+    default: ""
+  pr_body:
+    description: Pull request body (delivery=pull_request)
+    required: false
+    default: ""
+  close_superseded_prs:
+    description: >-
+      When delivery=pull_request, close other open bump PRs for the same managed_key
+      (head branches under gitops/bump/<key>/*) and delete their branches.
+    required: false
+    default: "true"
+  commit_message:
+    description: Commit message (defaults to chore(gitops) bump <key> to <version>)
+    required: false
+    default: ""
+  git_user_name:
+    description: Git author name for the commit
+    required: false
+    default: github-actions[bot]
+  git_user_email:
+    description: Git author email for the commit
+    required: false
+    default: 41898282+github-actions[bot]@users.noreply.github.com
+  source_repo:
+    description: Source repository shown in the default commit message
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: '"true" when the values file was updated and delivered'
+    value: ${{ steps.submit.outputs.changed }}
+  commit_sha:
+    description: Commit SHA on the GitOps head branch when changed=true, otherwise empty
+    value: ${{ steps.submit.outputs.commit_sha }}
+  pr_branch:
+    description: Head branch name when delivery=pull_request and changed=true
+    value: ${{ steps.submit.outputs.pr_branch }}
+  pr_url:
+    description: Pull request URL when delivery=pull_request and changed=true
+    value: ${{ steps.submit.outputs.pr_url }}
+  pr_number:
+    description: Pull request number when delivery=pull_request and changed=true
+    value: ${{ steps.submit.outputs.pr_number }}
+  closed_pr_numbers:
+    description: Comma-separated PR numbers closed as superseded (delivery=pull_request)
+    value: ${{ steps.submit.outputs.closed_pr_numbers }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout GitOps repository
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.token }}
+        ref: ${{ inputs.branch }}
+        fetch-depth: 0
+
+    - name: Update managed value
+      id: update
+      shell: bash
+      run: |
+        set -euo pipefail
+        "${{ github.action_path }}/update-managed-values.sh" \
+          "${{ inputs.values_path }}" \
+          "${{ inputs.managed_key }}" \
+          "${{ inputs.version }}"
+
+    - name: Submit GitOps change
+      id: submit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        DELIVERY: ${{ inputs.delivery }}
+        VALUES_PATH: ${{ inputs.values_path }}
+        MANAGED_KEY: ${{ inputs.managed_key }}
+        VERSION: ${{ inputs.version }}
+        BRANCH: ${{ inputs.branch }}
+        COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        GIT_USER_NAME: ${{ inputs.git_user_name }}
+        GIT_USER_EMAIL: ${{ inputs.git_user_email }}
+        SOURCE_REPO: ${{ inputs.source_repo }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITOPS_REPO: ${{ inputs.gitops_repo }}
+        PR_BRANCH_PREFIX: ${{ inputs.pr_branch_prefix }}
+        PR_TITLE: ${{ inputs.pr_title }}
+        PR_BODY: ${{ inputs.pr_body }}
+        CLOSE_SUPERSEDED_PRS: ${{ inputs.close_superseded_prs }}
+      run: |
+        set -euo pipefail
+        "${{ github.action_path }}/submit-gitops-change.sh"

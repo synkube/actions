@@ -1,0 +1,198 @@
+# Reusable GitOps deploy: exchange OIDC for a GitOps repo token, bump a
+# # github-workflow-managed value, then push or open a pull request (ArgoCD syncs after merge).
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      values_path:
+        description: Path inside gitops_repo (e.g. values/claw/prod/workloads/jwt-exchange.yaml)
+        required: true
+        type: string
+      managed_key:
+        description: Marker key (# github-workflow-managed:<key>)
+        required: true
+        type: string
+      version:
+        description: Version to write. Leave empty when tag_prefix is set.
+        required: false
+        type: string
+        default: ""
+      tag_prefix:
+        description: >-
+          When version is empty, resolve version from the latest git tag on the
+          caller repo matching this prefix (e.g. service/v → 0.0.7).
+        required: false
+        type: string
+        default: ""
+      gitops_repo:
+        description: GitOps repository to update
+        required: false
+        type: string
+        default: synkube/lite-do-argo-apps
+      gitops_branch:
+        description: Branch to push to (delivery=push) or PR base branch (delivery=pull_request)
+        required: false
+        type: string
+        default: main
+      delivery:
+        description: push (direct to gitops_branch) or pull_request (open PR for human review)
+        required: false
+        type: string
+        default: push
+      pr_branch_prefix:
+        description: Prefix for generated PR head branches when delivery=pull_request
+        required: false
+        type: string
+        default: gitops/bump
+      pr_title:
+        description: Pull request title when delivery=pull_request
+        required: false
+        type: string
+        default: ""
+      pr_body:
+        description: Pull request body when delivery=pull_request
+        required: false
+        type: string
+        default: ""
+      close_superseded_prs:
+        description: >-
+          When delivery=pull_request, close older open bump PRs for the same managed_key
+        required: false
+        type: string
+        default: "true"
+      jwt_exchange_url:
+        description: jwt-exchange base URL
+        required: false
+        type: string
+        default: https://jwt-exchange.synkube.com
+      requested_permissions:
+        description: >-
+          JSON permissions for the GitOps repo installation token. Leave empty to
+          auto-select from delivery (push: contents write; pull_request: + pull_requests write).
+        required: false
+        type: string
+        default: ""
+      commit_message:
+        description: Optional commit message override
+        required: false
+        type: string
+        default: ""
+      github_environment:
+        description: >-
+          GitHub Environment for the deploy job (included in OIDC token as environment).
+          Leave empty for no environment.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      changed:
+        description: Whether GitOps values were updated and delivered
+        value: ${{ jobs.deploy.outputs.changed }}
+      commit_sha:
+        description: Git commit SHA on the GitOps head branch when changed
+        value: ${{ jobs.deploy.outputs.commit_sha }}
+      version:
+        description: Version written to GitOps
+        value: ${{ jobs.deploy.outputs.version }}
+      pr_branch:
+        description: PR head branch when delivery=pull_request and changed
+        value: ${{ jobs.deploy.outputs.pr_branch }}
+      pr_url:
+        description: Pull request URL when delivery=pull_request and changed
+        value: ${{ jobs.deploy.outputs.pr_url }}
+      pr_number:
+        description: Pull request number when delivery=pull_request and changed
+        value: ${{ jobs.deploy.outputs.pr_number }}
+      closed_pr_numbers:
+        description: Superseded PR numbers closed automatically
+        value: ${{ jobs.deploy.outputs.closed_pr_numbers }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.github_environment != '' && inputs.github_environment || '' }}
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      commit_sha: ${{ steps.bump.outputs.commit_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      pr_branch: ${{ steps.bump.outputs.pr_branch }}
+      pr_url: ${{ steps.bump.outputs.pr_url }}
+      pr_number: ${{ steps.bump.outputs.pr_number }}
+      closed_pr_numbers: ${{ steps.bump.outputs.closed_pr_numbers }}
+    steps:
+      - name: Checkout caller repository (tag resolution)
+        if: inputs.version == '' && inputs.tag_prefix != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from git tag
+        id: resolve
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            echo "version=${INPUT_VERSION}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          [[ -n "${TAG_PREFIX}" ]] || {
+            echo "::error::version or tag_prefix is required"
+            exit 1
+          }
+          latest="$(git tag -l "${TAG_PREFIX}*" --sort=-version:refname | head -1)"
+          [[ -n "${latest}" ]] || {
+            echo "::error::no git tag found with prefix ${TAG_PREFIX}"
+            exit 1
+          }
+          version="${latest#"${TAG_PREFIX}"}"
+          echo "Resolved ${latest} -> ${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve GitOps token permissions
+        id: perms
+        shell: bash
+        env:
+          DELIVERY: ${{ inputs.delivery }}
+          CUSTOM: ${{ inputs.requested_permissions }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${CUSTOM}" ]]; then
+            echo "json=${CUSTOM}" >> "${GITHUB_OUTPUT}"
+          elif [[ "${DELIVERY}" == "pull_request" ]]; then
+            echo 'json={"contents":"write","pull_requests":"write","metadata":"read"}' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'json={"contents":"write","metadata":"read"}' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Exchange OIDC for GitOps token
+        id: token
+        uses: ./.github/actions/jwt-exchange
+        with:
+          jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
+          target_repo: ${{ inputs.gitops_repo }}
+          requested_permissions: ${{ steps.perms.outputs.json }}
+
+      - name: Bump GitOps values
+        id: bump
+        uses: ./.github/actions/gitops-bump
+        with:
+          token: ${{ steps.token.outputs.token }}
+          gitops_repo: ${{ inputs.gitops_repo }}
+          values_path: ${{ inputs.values_path }}
+          managed_key: ${{ inputs.managed_key }}
+          version: ${{ steps.resolve.outputs.version }}
+          delivery: ${{ inputs.delivery }}
+          branch: ${{ inputs.gitops_branch }}
+          pr_branch_prefix: ${{ inputs.pr_branch_prefix }}
+          pr_title: ${{ inputs.pr_title }}
+          pr_body: ${{ inputs.pr_body }}
+          close_superseded_prs: ${{ inputs.close_superseded_prs }}
+          commit_message: ${{ inputs.commit_message }}
