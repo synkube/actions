@@ -174,7 +174,7 @@ jobs:
 
       - name: Exchange OIDC for GitOps token
         id: token
-        uses: ./.github/actions/jwt-exchange
+        uses: synkube/actions/.github/actions/jwt-exchange@1e1cd2f89486836939ce1492ccf1827e6cc81375
         with:
           jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
           target_repo: ${{ inputs.gitops_repo }}
@@ -182,7 +182,7 @@ jobs:
 
       - name: Bump GitOps values
         id: bump
-        uses: ./.github/actions/gitops-bump
+        uses: synkube/actions/.github/actions/gitops-bump@1e1cd2f89486836939ce1492ccf1827e6cc81375
         with:
           token: ${{ steps.token.outputs.token }}
           gitops_repo: ${{ inputs.gitops_repo }}
