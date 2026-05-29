@@ -17,6 +17,8 @@ Reusable GitHub Actions for the synkube organization.
 | Path | Description |
 | --- | --- |
 | [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
+| [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan |
+| [.github/workflows/sha-tag.yaml](.github/workflows/sha-tag.yaml) | Resolve composite SHA suffix tag from latest git tag |
 
 ## Usage
 
@@ -29,3 +31,49 @@ Org convention: **`uses`** is pinned to the **full commit SHA** of this repo; th
 ```
 
 When you cut a new release, bump the SHA to the commit that tag points at and update the comment (e.g. `# v1.0.1`).
+
+### Multiple images (one job per image)
+
+Each image gets its own matrix row; GitHub runs one reusable-workflow job per row in parallel. Pair each row with a matching `deploy.yaml` call (`tag_prefix` + `managed_key`).
+
+```yaml
+jobs:
+  docker:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: api
+            image_name: api
+            dockerfile: Dockerfile
+            context: .
+            tag_prefix: api/v
+          - id: worker
+            image_name: worker
+            dockerfile: docker/worker/Dockerfile
+            context: docker/worker
+            tag_prefix: worker/v
+    permissions:
+      contents: write
+      packages: write
+    uses: synkube/actions/.github/workflows/docker-build-push.yaml@<sha>
+    with:
+      image_name: ${{ matrix.image_name }}
+      dockerfile: ${{ matrix.dockerfile }}
+      context: ${{ matrix.context }}
+      tag_prefix: ${{ matrix.tag_prefix }}
+    secrets: inherit
+
+  deploy-api:
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    uses: synkube/actions/.github/workflows/deploy.yaml@<sha>
+    with:
+      tag_prefix: api/v
+      managed_key: api.tag
+      values_path: values/.../my-service.yaml
+      github_environment: prod
+    secrets: inherit
+```
+
+Repos with path-filtered builds (e.g. jwt-exchange) should build a filtered `matrix.include` JSON in an upstream job rather than encoding dockerfile paths in `with:` expressions.
