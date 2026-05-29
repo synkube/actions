@@ -73,3 +73,46 @@ jobs:
           ./.github/actions/gitops-bump/update-managed-values.sh \
             /tmp/jwt-exchange-values.yaml missing.key 1.0.0
           [[ $? -ne 0 ]]
+
+      - name: Push retry handles concurrent GitOps updates
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          submit="${GITHUB_WORKSPACE}/.github/actions/gitops-bump/submit-gitops-change.sh"
+          update="${GITHUB_WORKSPACE}/.github/actions/gitops-bump/update-managed-values.sh"
+
+          cat > "${work}/values.yaml" <<'YAML'
+          tag: "0.0.1" # github-workflow-managed:service.tag
+          image: ghcr.io/synkube/jwt-exchange/opa:0.0.1 # github-workflow-managed:opa.image
+          YAML
+
+          git init -b main "${work}/origin"
+          cp "${work}/values.yaml" "${work}/origin/values.yaml"
+          git -C "${work}/origin" -c user.email=test@test -c user.name=test add values.yaml
+          git -C "${work}/origin" -c user.email=test@test -c user.name=test commit -m "init"
+          git init --bare "${work}/remote.git"
+          git -C "${work}/origin" remote add origin "${work}/remote.git"
+          git -C "${work}/origin" push -u origin main
+
+          git clone "${work}/remote.git" "${work}/job-a"
+          git clone "${work}/remote.git" "${work}/job-b"
+
+          "${update}" "${work}/job-a/values.yaml" service.tag 0.0.2
+          git -C "${work}/job-a" -c user.email=test@test -c user.name=test add values.yaml
+          git -C "${work}/job-a" -c user.email=test@test -c user.name=test commit -m "bump service"
+          git -C "${work}/job-a" push origin main
+
+          "${update}" "${work}/job-b/values.yaml" opa.image 0.0.2
+          out="${work}/job-b.out"
+          (
+            cd "${work}/job-b"
+            export DELIVERY=push VALUES_PATH=values.yaml MANAGED_KEY=opa.image VERSION=0.0.2
+            export BRANCH=main COMMIT_MESSAGE="bump opa" GITHUB_OUTPUT="${out}"
+            export GIT_USER_NAME=test GIT_USER_EMAIL=test@test PUSH_RETRY_MAX=5
+            "${submit}"
+          )
+
+          grep -q 'changed=true' "${out}"
+          git clone "${work}/remote.git" "${work}/verify"
+          grep -F 'tag: "0.0.2" # github-workflow-managed:service.tag' "${work}/verify/values.yaml"
+          grep -F 'image: ghcr.io/synkube/jwt-exchange/opa:0.0.2 # github-workflow-managed:opa.image' "${work}/verify/values.yaml"

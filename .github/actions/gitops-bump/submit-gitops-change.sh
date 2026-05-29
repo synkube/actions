@@ -7,6 +7,69 @@ fail() {
   exit 1
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+is_recoverable_push_rejection() {
+  local err="$1"
+  grep -qiE 'non-fast-forward|fetch first|rejected|failed to push some refs' <<< "${err}"
+}
+
+reapply_managed_bump() {
+  "${SCRIPT_DIR}/update-managed-values.sh" \
+    "${VALUES_PATH}" \
+    "${MANAGED_KEY}" \
+    "${VERSION}"
+}
+
+push_to_branch_with_retry() {
+  local max_attempts="${PUSH_RETRY_MAX:-5}"
+  local attempt=1
+  local push_err=""
+
+  git commit -m "${COMMIT_MESSAGE}"
+
+  while (( attempt <= max_attempts )); do
+    push_err=""
+    if push_err="$(git push origin "HEAD:${BRANCH}" 2>&1)"; then
+      echo "changed=true" >> "${GITHUB_OUTPUT}"
+      echo "commit_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+      return 0
+    fi
+
+    if ! is_recoverable_push_rejection "${push_err}"; then
+      echo "${push_err}" >&2
+      fail "git push to ${BRANCH} failed (non-recoverable)"
+    fi
+
+    echo "::warning::Push to ${BRANCH} rejected (attempt ${attempt}/${max_attempts}); syncing with origin/${BRANCH}..." >&2
+    echo "${push_err}" >&2
+
+    git fetch --no-tags origin "${BRANCH}" || fail "git fetch origin ${BRANCH} failed during push retry"
+
+    if git rebase "origin/${BRANCH}"; then
+      attempt=$((attempt + 1))
+      sleep "${attempt}"
+      continue
+    fi
+
+    echo "::warning::Rebase conflict on ${BRANCH}; resetting to origin/${BRANCH} and re-applying bump" >&2
+    git rebase --abort 2>/dev/null || true
+    git reset --hard "origin/${BRANCH}"
+    reapply_managed_bump
+    git add "${VALUES_PATH}"
+    if git diff --staged --quiet; then
+      echo "Remote ${BRANCH} already has ${MANAGED_KEY}=${VERSION}; nothing to push"
+      echo "changed=false" >> "${GITHUB_OUTPUT}"
+      return 0
+    fi
+    git commit -m "${COMMIT_MESSAGE}"
+    attempt=$((attempt + 1))
+    sleep "${attempt}"
+  done
+
+  fail "git push to ${BRANCH} failed after ${max_attempts} attempts (concurrent GitOps updates?)"
+}
+
 sanitize_managed_key() {
   local key="$1"
   local safe_key="${key//./-}"
@@ -82,10 +145,7 @@ if [[ -z "${COMMIT_MESSAGE}" ]]; then
 fi
 
 if [[ "${DELIVERY}" == "push" ]]; then
-  git commit -m "${COMMIT_MESSAGE}"
-  git push origin "HEAD:${BRANCH}"
-  echo "changed=true" >> "${GITHUB_OUTPUT}"
-  echo "commit_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+  push_to_branch_with_retry
   exit 0
 fi
 
