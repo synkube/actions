@@ -64,6 +64,12 @@ inputs:
     description: Seconds to wait between transient-failure retries
     required: false
     default: "3"
+  installation_repository_scope:
+    description: >-
+      GitHub installation token repository scope. `target` (default) limits the token to
+      target_repo; `all` omits repository restriction (required for org-wide Terraform).
+    required: false
+    default: target
 
 outputs:
   token:
@@ -100,5 +106,6 @@ runs:
         CONNECT_TIMEOUT: ${{ inputs.connect_timeout }}
         MAX_TIME: ${{ inputs.max_time }}
         RETRY_DELAY: ${{ inputs.retry_delay }}
+        INSTALLATION_REPOSITORY_SCOPE: ${{ inputs.installation_repository_scope }}
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: ${{ github.action_path }}/exchange.sh
