@@ -22,6 +22,7 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}"
 CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-10}"
 MAX_TIME="${MAX_TIME:-30}"
 RETRY_DELAY="${RETRY_DELAY:-3}"
+INSTALLATION_REPOSITORY_SCOPE="${INSTALLATION_REPOSITORY_SCOPE:-target}"
 
 fail() {
   echo "::error::$1"
@@ -58,17 +59,27 @@ OIDC_TOKEN="$(
 
 echo "::add-mask::${OIDC_TOKEN}"
 
+[[ "${INSTALLATION_REPOSITORY_SCOPE}" == "target" || "${INSTALLATION_REPOSITORY_SCOPE}" == "all" ]] \
+  || fail "installation_repository_scope must be 'target' or 'all'"
+
 EXCHANGE_URL="${JWT_EXCHANGE_URL%/}/api/v2/exchange/token"
 PAYLOAD="$(
   jq -cn \
     --arg subject_token "${OIDC_TOKEN}" \
     --arg target_repo "${TARGET_REPO}" \
     --arg exchange_profile "${EXCHANGE_PROFILE}" \
+    --arg installation_repository_scope "${INSTALLATION_REPOSITORY_SCOPE}" \
     --argjson github_permissions "${REQUESTED_PERMISSIONS}" \
     '{
        subject_token: $subject_token,
        resource: {type: "github_repository", id: $target_repo},
-       requested: {github_permissions: $github_permissions}
+       requested: (
+         {github_permissions: $github_permissions}
+         + (if $installation_repository_scope == "all"
+            then {installation_repository_scope: "all"}
+            else {}
+            end)
+       )
      }
      + (if $exchange_profile == "" then {} else {exchange_profile: $exchange_profile} end)'
 )"
