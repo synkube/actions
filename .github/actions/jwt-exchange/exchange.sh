@@ -77,7 +77,8 @@ PAYLOAD="$(
          {github_permissions: $github_permissions}
          + (if $installation_repository_scope == "all"
             then {installation_repository_scope: "all"}
-            else {})
+            else {}
+            end)
        )
      }
      + (if $exchange_profile == "" then {} else {exchange_profile: $exchange_profile} end)'
