@@ -159,7 +159,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy image scan
-        if: github.ref == inputs.push_ref && inputs.trivy_scan
+        if: github.ref == inputs.push_ref && inputs.trivy_scan && vars.CI_G_TRIVY_IMAGE_ENABLED != 'false'
         uses: synkube/actions/.github/actions/trivy-image@9f425ac79ec75ce388b4e27528784a095a272584
         with:
           image-ref: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
