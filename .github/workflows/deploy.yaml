@@ -182,7 +182,7 @@ jobs:
 
       - name: Bump GitOps values
         id: bump
-        uses: synkube/actions/.github/actions/gitops-bump@71e9b53824e289e5947d5f072f3f8e6f79946c54
+        uses: synkube/actions/.github/actions/gitops-bump@d84b7528f4fb87f8e295ebdb379e52c96c085369
         with:
           token: ${{ steps.token.outputs.token }}
           gitops_repo: ${{ inputs.gitops_repo }}
