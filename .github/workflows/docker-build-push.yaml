@@ -3,6 +3,10 @@
 # Scope: ONE image per workflow_call. Callers with multiple images use a job matrix;
 # each matrix row invokes this workflow separately (parallel sub-jobs).
 #
+# OCI labels (CI owns full set; Dockerfiles may set static source/title only):
+#   org.opencontainers.image.source / url / documentation / title / description /
+#   vendor / licenses / revision / created / version
+#
 # Caller pattern:
 #   strategy.matrix.include:
 #     - id: api
@@ -62,6 +66,17 @@ on:
         required: false
         type: boolean
         default: true
+      image_description:
+        description: >-
+          org.opencontainers.image.description (default: image_name)
+        required: false
+        type: string
+        default: ""
+      licenses:
+        description: org.opencontainers.image.licenses
+        required: false
+        type: string
+        default: MIT
     outputs:
       image_repo:
         description: ghcr.io/owner/repo/image_name (no tag)
@@ -133,6 +148,22 @@ jobs:
           custom_release_rules: "feat:patch,fix:patch,minor:minor,major:major"
           dry_run: true
 
+      - name: OCI labels
+        id: oci
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.meta.outputs.image_repo }}
+          labels: |
+            org.opencontainers.image.title=${{ steps.meta.outputs.repo }}/${{ inputs.image_name }}
+            org.opencontainers.image.description=${{ inputs.image_description != '' && inputs.image_description || format('{0}/{1}', steps.meta.outputs.repo, inputs.image_name) }}
+            org.opencontainers.image.vendor=Synkube
+            org.opencontainers.image.licenses=${{ inputs.licenses }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.new_version || '' }}
+
       - name: Build (non-push ref)
         if: github.ref != inputs.push_ref
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
@@ -141,6 +172,7 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: false
           tags: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
+          labels: ${{ steps.oci.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -155,6 +187,7 @@ jobs:
             ${{ steps.meta.outputs.image_repo }}:latest
             ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
             ${{ steps.meta.outputs.image_repo }}:${{ steps.version.outputs.new_version }}
+          labels: ${{ steps.oci.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
