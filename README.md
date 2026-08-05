@@ -18,6 +18,7 @@ Reusable GitHub Actions for the synkube organization.
 | --- | --- |
 | [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
 | [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan |
+| [.github/workflows/kics-scan.yaml](.github/workflows/kics-scan.yaml) | Reusable KICS IaC scan (digest-pinned engine, optional SARIF) |
 | [.github/workflows/sha-tag.yaml](.github/workflows/sha-tag.yaml) | Resolve composite SHA suffix tag from latest git tag |
 
 ## Usage
@@ -31,6 +32,15 @@ Org convention: **`uses`** is pinned to the **full commit SHA** of this repo; th
 ```
 
 When you cut a new release, bump the SHA to the commit that tag points at and update the comment (e.g. `# v1.0.1`).
+
+KICS reusable workflow (path filters / `CI_G_KICS_ENABLED` stay in the caller):
+
+```yaml
+jobs:
+  kics:
+    if: vars.CI_G_KICS_ENABLED != 'false'
+    uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
+```
 
 ### Multiple images (one job per image)
 

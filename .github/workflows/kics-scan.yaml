@@ -1,0 +1,117 @@
+# Reusable KICS IaC scan via digest-pinned synkube/actions KICS engine.
+#
+# Caller: contents: read. For SARIF also security-events: write + actions: read
+# (caller permissions cap this workflow). Pin uses: to a commit SHA of this repo.
+#
+# Default ignore_on_exit=results keeps the job green on findings (advisory).
+
+name: KICS IaC scan
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+on:
+  workflow_call:
+    inputs:
+      scan_path:
+        description: Path relative to repo root to scan.
+        type: string
+        required: false
+        default: "."
+      fail_on:
+        description: >-
+          Comma-separated severities that make KICS exit non-zero. Only gates
+          when ignore_on_exit is not results/all.
+        type: string
+        required: false
+        default: ""
+      ignore_on_exit:
+        description: none | results | errors | all (default results = advisory).
+        type: string
+        required: false
+        default: "results"
+      config_path:
+        description: >-
+          Optional kics.config. Else repo-root kics.config if present, else
+          embedded defaults (AWS SM CMK query excludes).
+        type: string
+        required: false
+        default: ""
+      sarif_report_enabled:
+        description: Upload SARIF to code scanning (needs GHAS on the caller).
+        type: boolean
+        required: false
+        default: false
+      upload_artifacts:
+        description: Upload kics-results/ as a workflow artifact.
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  kics-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve KICS config
+        id: config
+        shell: bash
+        env:
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p kics-results
+
+          if [ -n "${CONFIG_PATH}" ]; then
+            if [ ! -f "${CONFIG_PATH}" ]; then
+              echo "::error::config_path '${CONFIG_PATH}' does not exist"
+              exit 1
+            fi
+            echo "path=${CONFIG_PATH}" >> "$GITHUB_OUTPUT"
+          elif [ -f kics.config ]; then
+            echo "path=kics.config" >> "$GITHUB_OUTPUT"
+          else
+            # AWS-managed SM encryption is fine for SynKube; skip CMK-required noise.
+            printf '%s\n' \
+              'exclude-queries:' \
+              '  - a2f548f2-188c-4fff-b172-e9a6acb216bd' \
+              '  - b0d3ef3f-845d-4b1b-83d6-63a5a380375f' \
+              > kics-results/central-kics.config
+            echo "path=kics-results/central-kics.config" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run KICS scan
+        uses: synkube/actions/.github/actions/kics-github-action@9f425ac79ec75ce388b4e27528784a095a272584 # v1.0.0
+        with:
+          path: ${{ inputs.scan_path }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config_path: ${{ steps.config.outputs.path }}
+          fail_on: ${{ inputs.fail_on }}
+          ignore_on_exit: ${{ inputs.ignore_on_exit }}
+          output_formats: json,sarif
+          output_path: kics-results/
+          enable_jobs_summary: true
+
+      - name: Upload SARIF to GitHub code scanning
+        if: ${{ always() && inputs.sarif_report_enabled && hashFiles('kics-results/results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4.35.4
+        continue-on-error: true
+        with:
+          sarif_file: kics-results/results.sarif
+          category: kics-iac
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload KICS results as artifacts
+        if: ${{ always() && (inputs.sarif_report_enabled || inputs.upload_artifacts) && hashFiles('kics-results/**') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kics-results
+          path: kics-results/
