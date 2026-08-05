@@ -18,6 +18,7 @@ Reusable GitHub Actions for the synkube organization.
 | --- | --- |
 | [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
 | [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan |
+| [.github/workflows/kics-scan.yaml](.github/workflows/kics-scan.yaml) | Reusable KICS IaC scan — digest-pinned engine, central exclude-queries, optional SARIF |
 | [.github/workflows/sha-tag.yaml](.github/workflows/sha-tag.yaml) | Resolve composite SHA suffix tag from latest git tag |
 
 ## Usage
@@ -31,6 +32,46 @@ Org convention: **`uses`** is pinned to the **full commit SHA** of this repo; th
 ```
 
 When you cut a new release, bump the SHA to the commit that tag points at and update the comment (e.g. `# v1.0.1`).
+
+### KICS IaC scan (reusable workflow)
+
+Thin caller — path filters and the `CI_G_KICS_ENABLED` gate stay in the consuming repo; scanning lives here.
+
+```yaml
+name: KICS IaC Scan
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+on:
+  push:
+    paths: ["**/*.tf", "**/*.yaml", "**/*.yml"]
+  pull_request:
+    paths: ["**/*.tf", "**/*.yaml", "**/*.yml"]
+  workflow_dispatch:
+
+jobs:
+  kics:
+    if: vars.CI_G_KICS_ENABLED != 'false'
+    uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha> # after merge, pin the commit
+    with:
+      scan_path: .
+      # ignore_on_exit: results   # default — advisory (job stays green on findings)
+      # fail_on: critical,high    # use with ignore_on_exit: none to gate PRs
+      # sarif_report_enabled: true  # needs GHAS / Code Security on the repo
+```
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `scan_path` | `.` | Path relative to repo root |
+| `ignore_on_exit` | `results` | Ignore KICS exit caused by findings (`none` / `results` / `errors` / `all`) |
+| `fail_on` | _(empty)_ | Severities that make KICS exit non-zero (only gates when `ignore_on_exit` is not `results`/`all`) |
+| `config_path` | _(empty)_ | Optional repo-local kics.config; else repo-root `kics.config`; else embedded central excludes |
+| `sarif_report_enabled` | `false` | Upload SARIF to code scanning |
+| `sarif_category` | `kics-iac` | Code scanning category |
+| `upload_artifacts` | `false` | Always upload `kics-results/` (also uploads when SARIF is on) |
 
 ### Multiple images (one job per image)
 

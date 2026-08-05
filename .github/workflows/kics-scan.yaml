@@ -1,0 +1,210 @@
+# Reusable KICS IaC scan.
+#
+# Scans the calling repository with the digest-pinned synkube KICS action and
+# optionally uploads SARIF to GitHub code scanning. Embedded central
+# exclude-queries cover known-noisy AWS Secrets Manager CMK checks and
+# Terraform bootstrap secret placeholders ("dummy"), so most repos do not
+# need inline `# kics-scan ignore` for those.
+#
+# Caller setup: declare `permissions: contents: read` (always). When setting
+# `sarif_report_enabled: true`, also declare `security-events: write` and
+# `actions: read` in the *calling* workflow — reusable-workflow permissions
+# are capped by the caller. Code Security / GHAS must be enabled on the
+# calling repo for SARIF upload to succeed.
+#
+# ignore_on_exit (default results): KICS exits non-zero when it finds issues.
+# `results` swallows that exit so the job stays green (advisory scan). Use
+# `none` with fail_on (e.g. critical,high) when you want findings to gate CI.
+#
+# Pin callers to a commit SHA of this repo (not a branch). Action refs below
+# are also SHA-pinned.
+
+name: KICS IaC scan
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+on:
+  workflow_call:
+    inputs:
+      scan_path:
+        description: Path (relative to the repo root) for KICS to scan.
+        type: string
+        required: false
+        default: "."
+      fail_on:
+        description: >-
+          Severities that should return a non-zero exit code, comma-separated
+          (critical, high, medium, low, info). KICS treats this as a discrete
+          list, not a threshold — include critical when failing on high.
+          Empty means KICS default severities (only matters when
+          ignore_on_exit is not results/all).
+        type: string
+        required: false
+        default: ""
+      ignore_on_exit:
+        description: >-
+          Which non-zero KICS exits to ignore: none, results, errors, all.
+          Default results keeps scans advisory (job green on findings).
+        type: string
+        required: false
+        default: "results"
+      config_path:
+        description: >-
+          Optional path to a repo-local kics.config. When set, that file is
+          used. When empty, a repo-root kics.config is used if present;
+          otherwise the embedded central defaults are written and used.
+        type: string
+        required: false
+        default: ""
+      sarif_report_enabled:
+        description: >-
+          Emit SARIF and upload to GitHub code scanning. Requires Code
+          Security / GHAS on the calling repo and caller permissions
+          security-events: write + actions: read.
+        type: boolean
+        required: false
+        default: false
+      sarif_category:
+        description: Category label for the code scanning upload.
+        type: string
+        required: false
+        default: "kics-iac"
+      upload_artifacts:
+        description: Upload results-dir JSON/SARIF as a workflow artifact.
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  kics-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve KICS config
+        id: config
+        shell: bash
+        env:
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p kics-results
+
+          if [ -n "${CONFIG_PATH}" ]; then
+            if [ ! -f "${CONFIG_PATH}" ]; then
+              echo "::error::config_path '${CONFIG_PATH}' does not exist"
+              exit 1
+            fi
+            echo "path=${CONFIG_PATH}" >> "$GITHUB_OUTPUT"
+            echo "source=caller-input" >> "$GITHUB_OUTPUT"
+            echo "Using caller-provided config_path=${CONFIG_PATH}"
+          elif [ -f kics.config ]; then
+            echo "path=kics.config" >> "$GITHUB_OUTPUT"
+            echo "source=repo-local" >> "$GITHUB_OUTPUT"
+            echo "Using repo-local kics.config"
+          else
+            # Write without indentation so the YAML is valid as-is.
+            printf '%s\n' \
+              '# Central KICS defaults (synkube) — https://docs.kics.io/latest/configuration-file/' \
+              '# Tuned so repos do not need inline `# kics-scan ignore` for known noise.' \
+              'exclude-queries:' \
+              '  # Secretsmanager Secret Without KMS — AWS-managed encryption is acceptable' \
+              '  - a2f548f2-188c-4fff-b172-e9a6acb216bd' \
+              '  # Secretsmanager Secret Encrypted With AWS Managed Key' \
+              '  - b0d3ef3f-845d-4b1b-83d6-63a5a380375f' \
+              '  # Passwords And Secrets — flags Terraform bootstrap secret_string placeholders ("dummy")' \
+              '  - a88baa34-e2ad-44ea-ad6f-8cac87bc7c71' \
+              > kics-results/central-kics.config
+            echo "path=kics-results/central-kics.config" >> "$GITHUB_OUTPUT"
+            echo "source=embedded-central" >> "$GITHUB_OUTPUT"
+            echo "Using embedded central kics.config"
+            cat kics-results/central-kics.config
+          fi
+
+      - name: Run KICS scan
+        id: kics_scan
+        uses: synkube/actions/.github/actions/kics-github-action@9f425ac79ec75ce388b4e27528784a095a272584 # v1.0.0
+        with:
+          path: ${{ inputs.scan_path }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config_path: ${{ steps.config.outputs.path }}
+          fail_on: ${{ inputs.fail_on }}
+          ignore_on_exit: ${{ inputs.ignore_on_exit }}
+          output_formats: "json,sarif"
+          output_path: kics-results/
+          verbose: true
+          enable_annotations: true
+          enable_jobs_summary: true
+
+      - name: Summarize KICS results
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULTS="kics-results/results.json"
+          {
+            echo "## KICS scan summary"
+            echo ""
+            echo "- Config source: \`${{ steps.config.outputs.source }}\` (\`${{ steps.config.outputs.path }}\`)"
+            echo "- Scan path: \`${{ inputs.scan_path }}\`"
+            echo "- fail_on: \`${{ inputs.fail_on }}\`"
+            echo "- ignore_on_exit: \`${{ inputs.ignore_on_exit }}\`"
+            echo "- SARIF upload: \`${{ inputs.sarif_report_enabled }}\`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ! -f "$RESULTS" ]; then
+            echo "No results.json produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          python3 - "$RESULTS" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text())
+          severity = data.get("severity_counters") or data.get("severityCounters") or {}
+          print("| Severity | Count |")
+          print("|----------|------:|")
+          for key in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "critical", "high", "medium", "low", "info"):
+              if key in severity:
+                  print(f"| {key} | {severity[key]} |")
+          queries = data.get("queries") or []
+          if queries:
+              print("")
+              print("<details><summary>Findings by query (top 20)</summary>")
+              print("")
+              print("| Query | Severity | Count | Query ID |")
+              print("|-------|----------|------:|----------|")
+              for q in queries[:20]:
+                  name = q.get("query_name") or q.get("queryName") or "?"
+                  sev = q.get("severity") or "?"
+                  qid = q.get("query_id") or q.get("queryId") or "?"
+                  files = q.get("files") or []
+                  print(f"| {name} | {sev} | {len(files)} | `{qid}` |")
+              print("")
+              print("</details>")
+          PY
+
+      - name: Upload SARIF to GitHub code scanning
+        if: ${{ always() && inputs.sarif_report_enabled && hashFiles('kics-results/results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4.35.4
+        continue-on-error: true
+        with:
+          sarif_file: kics-results/results.sarif
+          category: ${{ inputs.sarif_category }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload KICS results as artifacts
+        if: ${{ always() && (inputs.sarif_report_enabled || inputs.upload_artifacts) && hashFiles('kics-results/**') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kics-results
+          path: kics-results/
