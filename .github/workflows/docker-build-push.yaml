@@ -26,7 +26,7 @@
 #     context: ${{ matrix.context }}
 #     tag_prefix: ${{ matrix.tag_prefix }}
 #
-# Pair each image with its own deploy.yaml call (tag_prefix + managed_key).
+# Pair each image with its own deploy.yaml call (managed_key + version from docker job output).
 name: Docker build and push
 
 on:
@@ -95,6 +95,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Serialize semver + git tag per prefix (ci + ci-multi can share api/v).
+    concurrency:
+      group: semver-${{ github.repository }}-${{ inputs.tag_prefix }}
+      cancel-in-progress: false
     permissions:
       contents: write
       packages: write
@@ -200,12 +204,23 @@ jobs:
           formats: table
 
       - name: Push version tag
-        if: github.ref == inputs.push_ref
-        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag_prefix: ${{ inputs.tag_prefix }}
-          release_branches: main
-          fetch_all_tags: true
-          default_bump: patch
-          custom_release_rules: "feat:patch,fix:patch,minor:minor,major:major"
+        if: github.ref == inputs.push_ref && steps.version.outputs.new_version != ''
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+          VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_PREFIX}${VERSION}"
+          if git rev-parse "refs/tags/${tag}" >/dev/null 2>&1; then
+            existing="$(git rev-parse "refs/tags/${tag}^{commit}")"
+            if [[ "${existing}" == "${GITHUB_SHA}" ]]; then
+              echo "Tag ${tag} already points at ${GITHUB_SHA}"
+              exit 0
+            fi
+            echo "::error::Tag ${tag} exists at ${existing}, cannot tag ${GITHUB_SHA}"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "Release ${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}"

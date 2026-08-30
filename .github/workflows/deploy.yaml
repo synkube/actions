@@ -1,5 +1,9 @@
 # Reusable GitOps deploy: exchange OIDC for a GitOps repo token, bump a
 # # github-workflow-managed value, then push or open a pull request (ArgoCD syncs after merge).
+#
+# Prefer inputs.version from the docker-build-push job output in the same workflow run.
+# tag_prefix resolves latest git tag on the caller repo and can race when multiple workflows
+# share a prefix (e.g. ci + ci-multi both using api/v).
 name: Deploy
 
 on:
