@@ -2,6 +2,9 @@
 #
 # Layout (single vs multi) is inferred from apps/ tree depth. No secrets required in
 # this public repo; callers pass GITHUB_TOKEN automatically for private repo checkout.
+#
+# Composite actions: pin to the same synkube/actions SHA as callers use for this workflow.
+# Update both refs below when composite action code changes.
 
 name: ArgoCD diff (workload)
 
@@ -54,17 +57,6 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Checkout synkube/actions composite actions
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: synkube/actions
-          ref: ${{ github.workflow_sha }}
-          path: .synkube-actions
-          sparse-checkout: |
-            .github/actions/argocd-diff-detect
-            .github/actions/argocd-diff-setup
-          sparse-checkout-cone-mode: false
-
       - name: Get changed files
         id: changed-files
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
@@ -77,7 +69,7 @@ jobs:
       - name: Detect affected applications
         id: detect
         if: steps.changed-files.outputs.any_changed == 'true'
-        uses: ./.synkube-actions/.github/actions/argocd-diff-detect
+        uses: synkube/actions/.github/actions/argocd-diff-detect@c9aefcee61b81c104ac5c4ee48eb8aade6a86223
         with:
           changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
           apps_path: ${{ inputs.apps_path }}
@@ -118,19 +110,8 @@ jobs:
           ref: ${{ github.event.pull_request.base.ref }}
           path: base-branch
 
-      - name: Checkout synkube/actions composite actions
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: synkube/actions
-          ref: ${{ github.workflow_sha }}
-          path: .synkube-actions
-          sparse-checkout: |
-            .github/actions/argocd-diff-detect
-            .github/actions/argocd-diff-setup
-          sparse-checkout-cone-mode: false
-
       - name: Setup application manifests
-        uses: ./.synkube-actions/.github/actions/argocd-diff-setup
+        uses: synkube/actions/.github/actions/argocd-diff-setup@c9aefcee61b81c104ac5c4ee48eb8aade6a86223
         with:
           app_path: ${{ matrix.app_path }}
           app_key: ${{ matrix.app_key }}
