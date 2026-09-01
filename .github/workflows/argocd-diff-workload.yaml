@@ -1,10 +1,7 @@
 # Reusable ArgoCD diff preview for co-located workload repos (apps/ + charts/ + workloads/).
 #
-# Caller: pull-requests on apps/**, charts/**, workloads/**. Pass actions_ref as the
-# same commit SHA as this workflow pin so scripts resolve from synkube/actions.
-#
-# Secrets:
-#   ARGOCD_DIFF_PAT (optional) — PAT with repo read; falls back to GITHUB_TOKEN.
+# Layout (single vs multi) is inferred from apps/ tree depth. No secrets required in
+# this public repo; callers pass GITHUB_TOKEN automatically for private repo checkout.
 
 name: ArgoCD diff (workload)
 
@@ -14,15 +11,6 @@ permissions:
 on:
   workflow_call:
     inputs:
-      actions_ref:
-        description: Commit SHA of synkube/actions (same as the uses: pin).
-        type: string
-        required: true
-      layout:
-        description: auto | single | multi — how to map charts/workloads paths to apps/.
-        type: string
-        required: false
-        default: auto
       apps_path:
         description: Path to Application manifests.
         type: string
@@ -48,10 +36,6 @@ on:
         type: string
         required: false
         default: sha256:c1d5f605f945d97cdb0845751d780cba3c39dab9071499972245e8f481795189
-    secrets:
-      ARGOCD_DIFF_PAT:
-        description: Optional PAT for private Helm/Git dependencies.
-        required: false
 
 env:
   ARGOCD_DIFF_VERSION: ${{ inputs.argocd_diff_version }}
@@ -63,9 +47,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      has_changes: ${{ steps.detect.outputs.has_changes }}
-      matrix: ${{ steps.detect.outputs.matrix }}
-      changed_files_by_app: ${{ steps.detect.outputs.changed_files_by_app }}
+      has_changes: ${{ steps.detect.outputs.has_changes || steps.detect-empty.outputs.has_changes }}
+      matrix: ${{ steps.detect.outputs.matrix || steps.detect-empty.outputs.matrix }}
+      changed_files_by_app: ${{ steps.detect.outputs.changed_files_by_app || steps.detect-empty.outputs.changed_files_by_app }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -79,34 +63,23 @@ jobs:
             ${{ inputs.workloads_path }}/**
             ${{ inputs.charts_path }}/**
 
-      - name: Checkout synkube/actions scripts
-        if: steps.changed-files.outputs.any_changed == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: synkube/actions
-          ref: ${{ inputs.actions_ref }}
-          path: _synkube_actions
-          sparse-checkout: |
-            .github/scripts/argocd-diff-workload
-          sparse-checkout-cone-mode: true
-
       - name: Detect affected applications
         id: detect
-        env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          APPS_PATH: ${{ inputs.apps_path }}
-          WORKLOADS_PATH: ${{ inputs.workloads_path }}
-          CHARTS_PATH: ${{ inputs.charts_path }}
-          LAYOUT: ${{ inputs.layout }}
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: ./.github/actions/argocd-diff-detect
+        with:
+          changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
+          apps_path: ${{ inputs.apps_path }}
+          workloads_path: ${{ inputs.workloads_path }}
+          charts_path: ${{ inputs.charts_path }}
+
+      - name: Set empty detect output
+        if: steps.changed-files.outputs.any_changed != 'true'
+        id: detect-empty
         run: |
-          set -euo pipefail
-          if [ "${{ steps.changed-files.outputs.any_changed }}" != "true" ]; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
-            echo 'changed_files_by_app={}' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          bash _synkube_actions/.github/scripts/argocd-diff-workload/detect.sh
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          echo 'changed_files_by_app={}' >> "$GITHUB_OUTPUT"
 
   argocd-diff:
     name: Diff - ${{ matrix.app_key }}
@@ -134,35 +107,22 @@ jobs:
           ref: ${{ github.event.pull_request.base.ref }}
           path: base-branch
 
-      - name: Checkout synkube/actions scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: synkube/actions
-          ref: ${{ inputs.actions_ref }}
-          path: _synkube_actions
-          sparse-checkout: |
-            .github/scripts/argocd-diff-workload
-          sparse-checkout-cone-mode: true
-
       - name: Setup application manifests
-        env:
-          APP_PATH: ${{ matrix.app_path }}
-          APP_KEY: ${{ matrix.app_key }}
-          TARGET_BRANCH: ${{ github.head_ref }}
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
-          REPO_FULL_NAME: ${{ github.repository }}
-          CHANGED_FILES_BY_APP: ${{ needs.detect-changes.outputs.changed_files_by_app }}
-        run: bash _synkube_actions/.github/scripts/argocd-diff-workload/setup-manifests.sh
+        uses: ./.github/actions/argocd-diff-setup
+        with:
+          app_path: ${{ matrix.app_path }}
+          app_key: ${{ matrix.app_key }}
+          target_branch: ${{ github.head_ref }}
+          base_branch: ${{ github.event.pull_request.base.ref }}
+          repo_full_name: ${{ github.repository }}
+          changed_files_by_app: ${{ needs.detect-changes.outputs.changed_files_by_app }}
 
-      - name: Prepare credentials
+      - name: Prepare repo credentials
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARGOCD_DIFF_PAT: ${{ secrets.ARGOCD_DIFF_PAT }}
         run: |
           set -euo pipefail
           mkdir -p secrets
-          TOKEN="${ARGOCD_DIFF_PAT:-$GITHUB_TOKEN}"
-
           cat > secrets/repo-creds.yaml << EOF
           apiVersion: v1
           kind: Secret
@@ -173,25 +133,8 @@ jobs:
               argocd.argoproj.io/secret-type: repo-creds
           stringData:
             url: https://github.com/${{ github.repository }}
-            password: ${TOKEN}
-            username: x-access-token
-          EOF
-
-          cat > secrets/ghcr-creds.yaml << EOF
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: ghcr-helm-creds
-            namespace: argocd
-            labels:
-              argocd.argoproj.io/secret-type: repository
-          stringData:
-            name: ghcr-helm
-            type: helm
-            url: ghcr.io/${{ github.repository_owner }}
-            username: x-access-token
             password: ${GITHUB_TOKEN}
-            enableOCI: "true"
+            username: x-access-token
           EOF
 
       - name: Cache ArgoCD Diff image

@@ -2,12 +2,17 @@ FROM docker.io/checkmarx/kics:v2.1.20@sha256:3e5a268eb8adda2e5a483c9359ddfc4cd52
 
 FROM cgr.dev/chainguard/wolfi-base@sha256:70750dfde91b4c5804b4df269121253fbdff73a9122925c7acc067aa33f9f55e
 
+WORKDIR /app
+
 COPY --from=kics-env /app /app
 
 COPY ./entrypoint.sh /entrypoint.sh
-
 RUN chmod +x /entrypoint.sh
 
-COPY ./ /app
+COPY package.json package-lock.json ./
+COPY src ./src
+RUN apk add --no-cache nodejs-22 npm \
+  && npm ci \
+  && npm run build --if-present
 
 ENTRYPOINT ["/entrypoint.sh"]

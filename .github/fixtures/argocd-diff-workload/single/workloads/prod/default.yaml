@@ -1,5 +1,3 @@
-app-starter:
-  fullnameOverride: fixture-api
-  image:
-    repository: ghcr.io/synkube/fixture/api
-    tag: "0.0.1"
+name: fixture-api
+image: nginx
+tag: "1.27"

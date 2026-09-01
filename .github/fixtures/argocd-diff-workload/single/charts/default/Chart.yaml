@@ -1,7 +1,4 @@
 apiVersion: v2
 name: default
 version: 0.1.0
-dependencies:
-  - name: app-starter
-    version: "1.4.1"
-    repository: oci://ghcr.io/synkube/charts
+type: application

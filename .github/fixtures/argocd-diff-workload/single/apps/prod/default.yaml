@@ -12,7 +12,6 @@ spec:
     helm:
       releaseName: fixture-api
       valueFiles:
-        - ../../workloads/_base.yaml
         - ../../workloads/prod/default.yaml
   destination:
     name: in-cluster

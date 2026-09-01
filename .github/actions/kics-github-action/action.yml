@@ -8,7 +8,7 @@ inputs:
     default: ${{github.token}}
   enable_annotations:
     required: false
-    default: "true"
+    default: "false"
     description: "Enable annotations report"
   enable_comments:
     required: false

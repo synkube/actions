@@ -43,7 +43,7 @@ jobs:
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
 
-ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** and **`actions_ref`** to the same commit SHA. Optional org/repo variable `CI_G_ARGOCD_DIFF_ENABLED=false` disables the caller job.
+ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree. Optional repo variable `CI_G_ARGOCD_DIFF_ENABLED=false` disables the caller job.
 
 ```yaml
 jobs:
@@ -53,25 +53,9 @@ jobs:
       contents: read
       pull-requests: write
     uses: synkube/actions/.github/workflows/argocd-diff-workload.yaml@<sha>
-    with:
-      actions_ref: <sha>
-      layout: single   # or multi
-Optional: add repo secret `ARGOCD_DIFF_PAT` and pass it from the caller only when configured:
-
-```yaml
-secrets:
-  ARGOCD_DIFF_PAT: ${{ secrets.ARGOCD_DIFF_PAT }}
 ```
 
-If the secret is not defined in the caller repo, omit the `secrets:` block entirely (GitHub fails workflow parsing otherwise).
-```
-
-**Credentials**
-
-| Secret / token | Required | Used for |
-| --- | --- | --- |
-| `GITHUB_TOKEN` (default) | Yes | Checkout, PR comments, GHCR OCI helm (`ghcr.io/<org>`) |
-| `ARGOCD_DIFF_PAT` | No | Private git/helm deps when `GITHUB_TOKEN` cannot read them |
+**Credentials:** `GITHUB_TOKEN` only (automatic). No secrets in this public repo.
 
 No AWS or cluster credentials are required; rendering runs in the `argocd-diff-preview` container locally in CI.
 
