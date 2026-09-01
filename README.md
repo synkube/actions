@@ -56,8 +56,14 @@ jobs:
     with:
       actions_ref: <sha>
       layout: single   # or multi
-    secrets:
-      ARGOCD_DIFF_PAT: ${{ secrets.ARGOCD_DIFF_PAT }}  # optional
+Optional: add repo secret `ARGOCD_DIFF_PAT` and pass it from the caller only when configured:
+
+```yaml
+secrets:
+  ARGOCD_DIFF_PAT: ${{ secrets.ARGOCD_DIFF_PAT }}
+```
+
+If the secret is not defined in the caller repo, omit the `secrets:` block entirely (GitHub fails workflow parsing otherwise).
 ```
 
 **Credentials**
