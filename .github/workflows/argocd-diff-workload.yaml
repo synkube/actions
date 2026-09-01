@@ -1,0 +1,243 @@
+# Reusable ArgoCD diff preview for co-located workload repos (apps/ + charts/ + workloads/).
+#
+# Layout (single vs multi) is inferred from apps/ tree depth. No secrets required in
+# this public repo; callers pass GITHUB_TOKEN automatically for private repo checkout.
+
+name: ArgoCD diff (workload)
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      apps_path:
+        description: Path to Application manifests.
+        type: string
+        required: false
+        default: apps
+      workloads_path:
+        description: Path to Helm value files.
+        type: string
+        required: false
+        default: workloads
+      charts_path:
+        description: Path to local wrapper charts.
+        type: string
+        required: false
+        default: charts
+      argocd_diff_version:
+        description: dagandersen/argocd-diff-preview image tag.
+        type: string
+        required: false
+        default: v0.1.22
+      argocd_diff_digest:
+        description: Image digest for argocd-diff-preview.
+        type: string
+        required: false
+        default: sha256:c1d5f605f945d97cdb0845751d780cba3c39dab9071499972245e8f481795189
+
+env:
+  ARGOCD_DIFF_VERSION: ${{ inputs.argocd_diff_version }}
+  ARGOCD_DIFF_DIGEST: ${{ inputs.argocd_diff_digest }}
+
+jobs:
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_changes: ${{ steps.detect.outputs.has_changes || steps.detect-empty.outputs.has_changes }}
+      matrix: ${{ steps.detect.outputs.matrix || steps.detect-empty.outputs.matrix }}
+      changed_files_by_app: ${{ steps.detect.outputs.changed_files_by_app || steps.detect-empty.outputs.changed_files_by_app }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        with:
+          files: |
+            ${{ inputs.apps_path }}/**
+            ${{ inputs.workloads_path }}/**
+            ${{ inputs.charts_path }}/**
+
+      - name: Detect affected applications
+        id: detect
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: ./.github/actions/argocd-diff-detect
+        with:
+          changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
+          apps_path: ${{ inputs.apps_path }}
+          workloads_path: ${{ inputs.workloads_path }}
+          charts_path: ${{ inputs.charts_path }}
+
+      - name: Set empty detect output
+        if: steps.changed-files.outputs.any_changed != 'true'
+        id: detect-empty
+        run: |
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          echo 'changed_files_by_app={}' >> "$GITHUB_OUTPUT"
+
+  argocd-diff:
+    name: Diff - ${{ matrix.app_key }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          path: target-branch
+
+      - name: Checkout base branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: base-branch
+
+      - name: Setup application manifests
+        uses: ./.github/actions/argocd-diff-setup
+        with:
+          app_path: ${{ matrix.app_path }}
+          app_key: ${{ matrix.app_key }}
+          target_branch: ${{ github.head_ref }}
+          base_branch: ${{ github.event.pull_request.base.ref }}
+          repo_full_name: ${{ github.repository }}
+          changed_files_by_app: ${{ needs.detect-changes.outputs.changed_files_by_app }}
+
+      - name: Prepare repo credentials
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p secrets
+          cat > secrets/repo-creds.yaml << EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: repo-creds-github
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repo-creds
+          stringData:
+            url: https://github.com/${{ github.repository }}
+            password: ${GITHUB_TOKEN}
+            username: x-access-token
+          EOF
+
+      - name: Cache ArgoCD Diff image
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: /tmp/docker-images
+          key: docker-argocd-diff-preview-${{ env.ARGOCD_DIFF_VERSION }}-${{ env.ARGOCD_DIFF_DIGEST }}
+
+      - name: Load or pull image
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/docker-images
+          if [ -f /tmp/docker-images/argocd-diff-preview.tar ]; then
+            docker load -i /tmp/docker-images/argocd-diff-preview.tar
+          else
+            docker pull "dagandersen/argocd-diff-preview:${{ env.ARGOCD_DIFF_VERSION }}@${{ env.ARGOCD_DIFF_DIGEST }}"
+            docker save "dagandersen/argocd-diff-preview:${{ env.ARGOCD_DIFF_VERSION }}@${{ env.ARGOCD_DIFF_DIGEST }}" -o /tmp/docker-images/argocd-diff-preview.tar
+          fi
+
+      - name: Run ArgoCD Diff Preview
+        env:
+          APP_KEY: ${{ matrix.app_key }}
+        run: |
+          set +e
+          mkdir -p output
+          DOCKER_LOG="/tmp/docker-run.log"
+          touch "$DOCKER_LOG"
+
+          docker run \
+            --network=host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$(pwd)/base-branch:/base-branch" \
+            -v "$(pwd)/target-branch:/target-branch" \
+            -v "$(pwd)/output:/output" \
+            -v "$(pwd)/secrets:/secrets" \
+            -e TARGET_BRANCH="${{ github.head_ref }}" \
+            -e REPO="${{ github.repository }}" \
+            -e FILE_REGEX="applications/.*\\.yaml" \
+            "dagandersen/argocd-diff-preview:${{ env.ARGOCD_DIFF_VERSION }}@${{ env.ARGOCD_DIFF_DIGEST }}" 2>&1 | tee "$DOCKER_LOG"
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            {
+              echo "## ⚠️ Diff preview failed"
+              echo ""
+              echo "Exit code: ${EXIT_CODE}"
+              echo ""
+              echo "<details><summary>Error logs</summary>"
+              echo ""
+              echo '```'
+              if [ -s "$DOCKER_LOG" ]; then
+                tail -100 "$DOCKER_LOG"
+              else
+                echo "No logs captured."
+              fi
+              echo '```'
+              echo "</details>"
+            } > output/diff.md
+          fi
+
+          if [ -f output/diff.md ]; then
+            { echo "## 🔍 ArgoCD diff: \`${APP_KEY}\`"; echo ""; cat output/diff.md; } > output/final.md
+            mv output/final.md output/diff.md
+          else
+            echo "## ✅ No manifest changes for \`${APP_KEY}\`" > output/diff.md
+          fi
+
+          head -c 900000 output/diff.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post diff comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          APP_KEY: ${{ matrix.app_key }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = `<!-- argocd-diff-workload:${process.env.APP_KEY} -->`;
+            let diff = fs.readFileSync('output/diff.md', 'utf8');
+            if (diff.length > 60000) {
+              diff = diff.substring(0, 60000) + '\n\n---\n⚠️ **Truncated**';
+            }
+            const body = `${marker}\n${diff}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

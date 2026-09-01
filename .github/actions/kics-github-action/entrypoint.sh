@@ -86,8 +86,14 @@ cp -r "${CP_PATH}" "/app/"
 
 cd /app
 
-# install and run nodejs
-apk add --update nodejs npm
-npm ci
-npm run build --if-present
+needs_reporting=false
+if [ "$INPUT_ENABLE_ANNOTATIONS" = "true" ] || [ "$INPUT_ENABLE_COMMENTS" = "true" ] || [ "$INPUT_ENABLE_JOBS_SUMMARY" = "true" ]; then
+    needs_reporting=true
+fi
+
+if [ "$needs_reporting" != "true" ]; then
+    exit $KICS_EXIT_CODE
+fi
+
 node dist/index.js
+exit $KICS_EXIT_CODE

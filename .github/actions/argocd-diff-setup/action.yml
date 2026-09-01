@@ -1,0 +1,46 @@
+name: ArgoCD diff setup manifests
+description: Prepare base/target Application manifests for argocd-diff-preview.
+
+inputs:
+  app_path:
+    description: Relative path to the Application manifest under apps/.
+    required: true
+  app_key:
+    description: Stable key for PR comments and output filenames.
+    required: true
+  target_branch:
+    description: PR head branch name.
+    required: true
+  base_branch:
+    description: PR base branch name.
+    required: true
+  repo_full_name:
+    description: owner/repo of the workload repository.
+    required: true
+  changed_files_by_app:
+    description: JSON map of changed files per app key.
+    required: false
+    default: "{}"
+  base_dir:
+    description: Directory containing the base branch checkout.
+    required: false
+    default: base-branch
+  target_dir:
+    description: Directory containing the target branch checkout.
+    required: false
+    default: target-branch
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APP_PATH: ${{ inputs.app_path }}
+        APP_KEY: ${{ inputs.app_key }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
+        REPO_FULL_NAME: ${{ inputs.repo_full_name }}
+        CHANGED_FILES_BY_APP: ${{ inputs.changed_files_by_app }}
+        BASE_DIR: ${{ inputs.base_dir }}
+        TARGET_DIR: ${{ inputs.target_dir }}
+      run: bash "${GITHUB_ACTION_PATH}/setup-manifests.sh"

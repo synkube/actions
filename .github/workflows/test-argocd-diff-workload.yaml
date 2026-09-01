@@ -1,0 +1,71 @@
+name: Test ArgoCD diff workload scripts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/actions/argocd-diff-detect/**"
+      - ".github/actions/argocd-diff-setup/**"
+      - ".github/workflows/argocd-diff-workload.yaml"
+      - ".github/workflows/test-argocd-diff-workload.yaml"
+      - ".github/fixtures/argocd-diff-workload/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test-detect-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Stage single-layout fixture
+        run: cp -r .github/fixtures/argocd-diff-workload/single/* .
+
+      - name: Run detect for single-layout fixture
+        uses: ./.github/actions/argocd-diff-detect
+        id: detect
+        with:
+          changed_files: workloads/prod/default.yaml
+          apps_path: apps
+          workloads_path: workloads
+          charts_path: charts
+
+      - name: Assert detect output
+        run: |
+          set -euo pipefail
+          test "${{ steps.detect.outputs.has_changes }}" = "true"
+          echo "${{ steps.detect.outputs.matrix }}" | grep -q 'apps/prod/default.yaml'
+
+  test-setup-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Stage single-layout fixture
+        run: |
+          set -euo pipefail
+          FIXTURE=.github/fixtures/argocd-diff-workload/single
+          mkdir -p base-branch target-branch
+          cp -r "${FIXTURE}"/* base-branch/
+          cp -r "${FIXTURE}"/* target-branch/
+
+      - name: Run setup-manifests for Application fixture
+        uses: ./.github/actions/argocd-diff-setup
+        with:
+          app_path: apps/prod/default.yaml
+          app_key: prod-default
+          target_branch: feature/test
+          base_branch: main
+          repo_full_name: synkube/actions
+          changed_files_by_app: '{"prod-default":["workloads/prod/default.yaml"]}'
+
+      - name: Assert setup output
+        run: |
+          set -euo pipefail
+          test -f base-branch/applications/prod-default.yaml
+          test -f target-branch/applications/prod-default.yaml
+          grep -q 'targetRevision: main' base-branch/applications/prod-default.yaml
+          grep -q 'targetRevision: feature/test' target-branch/applications/prod-default.yaml
