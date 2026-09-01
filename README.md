@@ -43,7 +43,7 @@ jobs:
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
 
-ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree. Optional repo variable `CI_G_ARGOCD_DIFF_ENABLED=false` disables the caller job.
+ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree. Composite actions resolve via `github.workflow_sha` (same commit as the `uses:` pin); no extra inputs required.
 
 ```yaml
 jobs:
