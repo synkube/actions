@@ -1,0 +1,61 @@
+name: Test ArgoCD diff workload scripts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/scripts/argocd-diff-workload/**"
+      - ".github/workflows/argocd-diff-workload.yaml"
+      - ".github/workflows/test-argocd-diff-workload.yaml"
+      - ".github/fixtures/argocd-diff-workload/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test-detect-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run detect for single-layout fixture
+        env:
+          CHANGED_FILES: workloads/prod/default.yaml
+          APPS_PATH: apps
+          WORKLOADS_PATH: workloads
+          CHARTS_PATH: charts
+          LAYOUT: single
+        run: |
+          set -euo pipefail
+          cp -r .github/fixtures/argocd-diff-workload/single/* .
+          export GITHUB_OUTPUT=/tmp/detect.out
+          bash .github/scripts/argocd-diff-workload/detect.sh
+          grep -q 'has_changes=true' /tmp/detect.out
+          grep -q 'apps/prod/default.yaml' /tmp/detect.out
+
+  test-setup-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run setup-manifests for Application fixture
+        env:
+          APP_PATH: apps/prod/default.yaml
+          APP_KEY: prod-default
+          TARGET_BRANCH: feature/test
+          BASE_BRANCH: main
+          REPO_FULL_NAME: synkube/actions
+          CHANGED_FILES_BY_APP: '{"prod-default":["workloads/prod/default.yaml"]}'
+        run: |
+          set -euo pipefail
+          FIXTURE=.github/fixtures/argocd-diff-workload/single
+          mkdir -p base-branch target-branch
+          cp -r "${FIXTURE}"/* base-branch/
+          cp -r "${FIXTURE}"/* target-branch/
+          bash .github/scripts/argocd-diff-workload/setup-manifests.sh
+          test -f base-branch/applications/prod-default.yaml
+          test -f target-branch/applications/prod-default.yaml
+          grep -q 'targetRevision: main' base-branch/applications/prod-default.yaml
+          grep -q 'targetRevision: feature/test' target-branch/applications/prod-default.yaml

@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fixture-single-prod
+  namespace: argocd
+spec:
+  project: fixture
+  source:
+    repoURL: https://github.com/synkube/actions
+    path: charts/default
+    targetRevision: main
+    helm:
+      releaseName: fixture-api
+      valueFiles:
+        - ../../workloads/_base.yaml
+        - ../../workloads/prod/default.yaml
+  destination:
+    name: in-cluster
+    namespace: fixture-prod

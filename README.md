@@ -19,6 +19,7 @@ Reusable GitHub Actions for the synkube organization.
 | [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
 | [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan |
 | [.github/workflows/kics-scan.yaml](.github/workflows/kics-scan.yaml) | Reusable KICS IaC scan (digest-pinned engine, optional SARIF) |
+| [.github/workflows/argocd-diff-workload.yaml](.github/workflows/argocd-diff-workload.yaml) | Reusable ArgoCD diff preview for co-located workload repos (`apps/` + `charts/` + `workloads/`) |
 | [.github/workflows/sha-tag.yaml](.github/workflows/sha-tag.yaml) | Resolve composite SHA suffix tag from latest git tag |
 
 ## Usage
@@ -41,6 +42,32 @@ jobs:
     if: vars.CI_G_KICS_ENABLED != 'false'
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
+
+ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** and **`actions_ref`** to the same commit SHA. Optional org/repo variable `CI_G_ARGOCD_DIFF_ENABLED=false` disables the caller job.
+
+```yaml
+jobs:
+  argocd-diff:
+    if: vars.CI_G_ARGOCD_DIFF_ENABLED != 'false'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: synkube/actions/.github/workflows/argocd-diff-workload.yaml@<sha>
+    with:
+      actions_ref: <sha>
+      layout: single   # or multi
+    secrets:
+      ARGOCD_DIFF_PAT: ${{ secrets.ARGOCD_DIFF_PAT }}  # optional
+```
+
+**Credentials**
+
+| Secret / token | Required | Used for |
+| --- | --- | --- |
+| `GITHUB_TOKEN` (default) | Yes | Checkout, PR comments, GHCR OCI helm (`ghcr.io/<org>`) |
+| `ARGOCD_DIFF_PAT` | No | Private git/helm deps when `GITHUB_TOKEN` cannot read them |
+
+No AWS or cluster credentials are required; rendering runs in the `argocd-diff-preview` container locally in CI.
 
 ### Multiple images (one job per image)
 
