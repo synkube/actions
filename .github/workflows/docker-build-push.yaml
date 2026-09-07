@@ -34,6 +34,7 @@
 #   extra_repository: synkube/agent-github-broker
 #   extra_ref: <sha>
 #   extra_path: agent-github-broker
+#   (extra checkout uses jwt-exchange — caller OPA policy must allow source → target)
 #   build_args: |
 #     BROKER_CLIENTS_IMAGE=ghcr.io/synkube/agent-github-broker/clients:0.0.1
 #
@@ -129,6 +130,11 @@ on:
         required: false
         type: string
         default: ""
+      jwt_exchange_url:
+        description: jwt-exchange base URL for cross-repo extra checkout
+        required: false
+        type: string
+        default: https://jwt-exchange.synkube.com
     outputs:
       image_repo:
         description: ghcr.io/owner/repo/image_name (no tag)
@@ -154,6 +160,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
     outputs:
       image_repo: ${{ steps.meta.outputs.image_repo }}
       version: ${{ steps.version.outputs.new_version || '' }}
@@ -163,12 +170,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Exchange OIDC for extra repository
+        if: inputs.extra_repository != ''
+        id: extra-token
+        uses: synkube/actions/.github/actions/jwt-exchange@71e9b53824e289e5947d5f072f3f8e6f79946c54
+        with:
+          jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
+          target_repo: ${{ inputs.extra_repository }}
+          requested_permissions: '{"contents":"read","metadata":"read"}'
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: inputs.extra_repository != ''
         with:
           repository: ${{ inputs.extra_repository }}
           ref: ${{ inputs.extra_ref }}
           path: ${{ inputs.extra_path }}
+          token: ${{ steps.extra-token.outputs.token }}
 
       - name: Registry metadata
         id: meta
