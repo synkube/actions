@@ -27,7 +27,7 @@
 #     tag_prefix: ${{ matrix.tag_prefix }}
 #
 # Optional overrides (agent-runtime flat GHCR names, bootstrap BuildKit contexts):
-#   image_repo: ghcr.io/synkube/agent-runtime
+#   image_name: runtime   → ghcr.io/synkube/agent-runtime/runtime
 #   target: from-context
 #   build_contexts: |
 #     broker=broker-src/clients
@@ -53,7 +53,7 @@ on:
         default: ""
       image_repo:
         description: >-
-          Full image repository without tag (e.g. ghcr.io/synkube/agent-runtime).
+          Full image repository without tag (e.g. ghcr.io/synkube/agent-runtime/runtime).
           When set, overrides ghcr.io/<owner>/<repo>/<image_name>.
         required: false
         type: string
