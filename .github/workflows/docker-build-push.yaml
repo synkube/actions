@@ -26,6 +26,14 @@
 #     context: ${{ matrix.context }}
 #     tag_prefix: ${{ matrix.tag_prefix }}
 #
+# Optional overrides (agent-runtime flat GHCR names, bootstrap BuildKit contexts):
+#   image_repo: ghcr.io/synkube/agent-runtime
+#   target: from-context
+#   build_contexts: |
+#     broker=broker-src/clients
+#   build_args: |
+#     BROKER_CLIENTS_IMAGE=ghcr.io/synkube/agent-github-broker/clients:0.0.1
+#
 # Pair each image with its own deploy.yaml call (managed_key + version from docker job output).
 name: Docker build and push
 
@@ -35,8 +43,17 @@ on:
       image_name:
         description: >-
           Image path segment under ghcr.io/<owner>/<repo>/ (e.g. service, opa).
-        required: true
+          Optional when image_repo is set (defaults to last path segment for labels/Trivy).
+        required: false
         type: string
+        default: ""
+      image_repo:
+        description: >-
+          Full image repository without tag (e.g. ghcr.io/synkube/agent-runtime).
+          When set, overrides ghcr.io/<owner>/<repo>/<image_name>.
+        required: false
+        type: string
+        default: ""
       dockerfile:
         description: Dockerfile path relative to repository root
         required: true
@@ -77,6 +94,23 @@ on:
         required: false
         type: string
         default: MIT
+      target:
+        description: Docker build target (e.g. from-context, from-image)
+        required: false
+        type: string
+        default: ""
+      build_contexts:
+        description: >-
+          Newline-separated BuildKit additional contexts (name=path), e.g.
+          broker=broker-src/clients
+        required: false
+        type: string
+        default: ""
+      build_args:
+        description: Newline-separated Docker build-args (KEY=value)
+        required: false
+        type: string
+        default: ""
     outputs:
       image_repo:
         description: ghcr.io/owner/repo/image_name (no tag)
@@ -116,23 +150,34 @@ jobs:
         env:
           REGISTRY: ${{ inputs.registry }}
           IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_REPO_OVERRIDE: ${{ inputs.image_repo }}
         run: |
           set -euo pipefail
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           repo="$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')"
           sha_short="$(echo "${{ github.sha }}" | cut -c1-7)"
+          if [[ -n "${IMAGE_REPO_OVERRIDE}" ]]; then
+            image_repo="${IMAGE_REPO_OVERRIDE}"
+            label_name="${IMAGE_NAME:-${image_repo##*/}}"
+          elif [[ -n "${IMAGE_NAME}" ]]; then
+            image_repo="${REGISTRY}/${owner}/${repo}/${IMAGE_NAME}"
+            label_name="${IMAGE_NAME}"
+          else
+            echo "::error::image_name or image_repo is required"
+            exit 1
+          fi
           {
             echo "owner=${owner}"
             echo "repo=${repo}"
             echo "sha=${sha_short}"
-            echo "image_repo=${REGISTRY}/${owner}/${repo}/${IMAGE_NAME}"
+            echo "image_repo=${image_repo}"
+            echo "label_name=${label_name}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to registry
-        if: github.ref == inputs.push_ref
         uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ${{ inputs.registry }}
@@ -158,8 +203,8 @@ jobs:
         with:
           images: ${{ steps.meta.outputs.image_repo }}
           labels: |
-            org.opencontainers.image.title=${{ steps.meta.outputs.repo }}/${{ inputs.image_name }}
-            org.opencontainers.image.description=${{ inputs.image_description != '' && inputs.image_description || format('{0}/{1}', steps.meta.outputs.repo, inputs.image_name) }}
+            org.opencontainers.image.title=${{ steps.meta.outputs.repo }}/${{ steps.meta.outputs.label_name }}
+            org.opencontainers.image.description=${{ inputs.image_description != '' && inputs.image_description || format('{0}/{1}', steps.meta.outputs.repo, steps.meta.outputs.label_name) }}
             org.opencontainers.image.vendor=Synkube
             org.opencontainers.image.licenses=${{ inputs.licenses }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -174,6 +219,9 @@ jobs:
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build_args }}
+          build-contexts: ${{ inputs.build_contexts }}
           push: false
           tags: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
           labels: ${{ steps.oci.outputs.labels }}
@@ -186,6 +234,9 @@ jobs:
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build_args }}
+          build-contexts: ${{ inputs.build_contexts }}
           push: true
           tags: |
             ${{ steps.meta.outputs.image_repo }}:latest
@@ -200,7 +251,7 @@ jobs:
         uses: synkube/actions/.github/actions/trivy-image@9f425ac79ec75ce388b4e27528784a095a272584
         with:
           image-ref: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
-          project-name: ${{ inputs.image_name }}
+          project-name: ${{ steps.meta.outputs.label_name }}
           formats: table
 
       - name: Push version tag
