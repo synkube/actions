@@ -31,6 +31,9 @@
 #   target: from-context
 #   build_contexts: |
 #     broker=broker-src/clients
+#   extra_repository: synkube/agent-github-broker
+#   extra_ref: <sha>
+#   extra_path: agent-github-broker
 #   build_args: |
 #     BROKER_CLIENTS_IMAGE=ghcr.io/synkube/agent-github-broker/clients:0.0.1
 #
@@ -111,6 +114,21 @@ on:
         required: false
         type: string
         default: ""
+      extra_repository:
+        description: Optional additional checkout (owner/name) before build
+        required: false
+        type: string
+        default: ""
+      extra_ref:
+        description: Ref for extra_repository checkout
+        required: false
+        type: string
+        default: ""
+      extra_path:
+        description: Path for extra_repository checkout
+        required: false
+        type: string
+        default: ""
     outputs:
       image_repo:
         description: ghcr.io/owner/repo/image_name (no tag)
@@ -144,6 +162,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: inputs.extra_repository != ''
+        with:
+          repository: ${{ inputs.extra_repository }}
+          ref: ${{ inputs.extra_ref }}
+          path: ${{ inputs.extra_path }}
 
       - name: Registry metadata
         id: meta
