@@ -38,14 +38,14 @@ Supported shapes on the same line as the marker:
   uses: synkube/actions/.github/actions/jwt-exchange@<sha>
   with:
     jwt_exchange_url: https://jwt-exchange.synkube.com
-    target_repo: synkube/lite-do-argo-apps
+    target_repo: synkube/lite-argo-apps
     requested_permissions: '{"contents":"write","metadata":"read"}'
 
 - name: Bump values
   uses: synkube/actions/.github/actions/gitops-bump@<sha>
   with:
     token: ${{ steps.token.outputs.token }}
-    gitops_repo: synkube/lite-do-argo-apps
+    gitops_repo: synkube/lite-argo-apps
     values_path: values/claw/prod/workloads/jwt-exchange.yaml
     managed_key: service.tag
     version: "0.0.7"
@@ -72,7 +72,7 @@ jobs:
       tag_prefix: service/v
       values_path: values/claw/prod/workloads/jwt-exchange.yaml
       managed_key: service.tag
-      gitops_repo: synkube/lite-do-argo-apps
+      gitops_repo: synkube/lite-argo-apps
       github_environment: prod
 ```
 
@@ -85,7 +85,7 @@ Pull request for human review:
       # requested_permissions auto-includes pull_requests:write when delivery=pull_request
 ```
 
-Requires a jwt-exchange **explicit policy** for the caller repo → `synkube/lite-do-argo-apps` with `contents: write` (and `pull_requests: write` when using PR mode).
+Requires a jwt-exchange **explicit policy** for the caller repo → `synkube/lite-argo-apps` with `contents: write` (and `pull_requests: write` when using PR mode).
 
 ## Inputs
 

@@ -33,7 +33,7 @@ on:
         description: GitOps repository to update
         required: false
         type: string
-        default: synkube/lite-do-argo-apps
+        default: synkube/lite-argo-apps
       gitops_branch:
         description: Branch to push to (delivery=push) or PR base branch (delivery=pull_request)
         required: false
