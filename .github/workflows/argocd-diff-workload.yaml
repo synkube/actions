@@ -69,7 +69,7 @@ jobs:
       - name: Detect affected applications
         id: detect
         if: steps.changed-files.outputs.any_changed == 'true'
-        uses: synkube/actions/.github/actions/argocd-diff-detect@c9aefcee61b81c104ac5c4ee48eb8aade6a86223
+        uses: synkube/actions/.github/actions/argocd-diff-detect@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
         with:
           changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
           apps_path: ${{ inputs.apps_path }}
@@ -111,7 +111,7 @@ jobs:
           path: base-branch
 
       - name: Setup application manifests
-        uses: synkube/actions/.github/actions/argocd-diff-setup@c9aefcee61b81c104ac5c4ee48eb8aade6a86223
+        uses: synkube/actions/.github/actions/argocd-diff-setup@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
         with:
           app_path: ${{ matrix.app_path }}
           app_key: ${{ matrix.app_key }}

@@ -17,7 +17,7 @@ Reusable GitHub Actions for the synkube organization.
 | Path | Description |
 | --- | --- |
 | [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
-| [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan |
+| [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan (see caller permissions below) |
 | [.github/workflows/kics-scan.yaml](.github/workflows/kics-scan.yaml) | Reusable KICS IaC scan (digest-pinned engine, optional SARIF) |
 | [.github/workflows/argocd-diff-workload.yaml](.github/workflows/argocd-diff-workload.yaml) | Reusable ArgoCD diff preview for co-located workload repos (`apps/` + `charts/` + `workloads/`) |
 | [.github/workflows/sha-tag.yaml](.github/workflows/sha-tag.yaml) | Resolve composite SHA suffix tag from latest git tag |
@@ -43,7 +43,28 @@ jobs:
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
 
-Reusable workflows that call composites in this repo (`deploy`, `docker-build-push`, `argocd-diff-workload`, …) must pin those composites to the **same commit SHA** callers use for the workflow `uses:` line. GitHub does not allow `${{ github.workflow_sha }}` for cross-repo `uses:` (that is the caller workflow, not `synkube/actions`). On each release, bump the workflow SHA in consumer repos and the matching composite refs inside the workflow file in this repo to that release commit.
+Reusable workflows that call composites in this repo (`deploy`, `docker-build-push`, `argocd-diff-workload`, …) must pin those composites to the **same commit SHA** callers use for the workflow `uses:` line. GitHub does not allow `${{ github.workflow_sha }}` for cross-repo `uses:` (that is the caller workflow, not `synkube/actions`). Before tagging a release, run `scripts/sync-internal-action-refs.sh` and commit any diff so internal composite refs match `HEAD`.
+
+### Caller job permissions (reusable workflows)
+
+Nested workflows cannot escalate `GITHUB_TOKEN` / OIDC beyond what the **calling job** grants. If the caller sets `jobs.<id>.permissions` without `id-token: write`, unlisted scopes default to `none` and GitHub fails the run at **startup** when the called workflow’s job requests `id-token: write`.
+
+| Called workflow | Grant on the calling job |
+| --- | --- |
+| `deploy.yaml` | `contents: read`, `id-token: write` |
+| `docker-build-push.yaml` | `contents: write`, `packages: write`, `id-token: write` |
+
+Example (docker job):
+
+```yaml
+  docker-api:
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    uses: synkube/actions/.github/workflows/docker-build-push.yaml@<sha>
+    secrets: inherit
+```
 
 ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree.
 

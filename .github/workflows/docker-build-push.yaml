@@ -40,8 +40,13 @@
 #
 # Pair each image with its own deploy.yaml call (managed_key + version from docker job output).
 #
+# Caller job permissions (required on the job that `uses:` this workflow):
+#   contents: write
+#   packages: write
+#   id-token: write   # job requests OIDC when extra_repository is set; callers must grant it or startup fails
+#
 # Composite actions: pin to the same synkube/actions SHA as callers use for this workflow.
-# Update composite action refs below when action code changes (see README.md).
+# Run scripts/sync-internal-action-refs.sh before tagging a release (see README.md).
 name: Docker build and push
 
 on:
@@ -176,7 +181,7 @@ jobs:
       - name: Exchange OIDC for extra repository
         if: inputs.extra_repository != ''
         id: extra-token
-        uses: synkube/actions/.github/actions/jwt-exchange@e3651ac1ff9fe4a48a0301f97ca4827a4a853918
+        uses: synkube/actions/.github/actions/jwt-exchange@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
         with:
           jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
           target_repo: ${{ inputs.extra_repository }}
@@ -259,25 +264,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.new_version || '' }}
 
       - name: Build (non-push ref)
-        if: >-
-          github.ref != inputs.push_ref
-          && inputs.target == ''
-          && inputs.build_args == ''
-          && inputs.build_contexts == ''
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          push: false
-          tags: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
-          labels: ${{ steps.oci.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build (non-push ref, BuildKit options)
-        if: >-
-          github.ref != inputs.push_ref
-          && (inputs.target != '' || inputs.build_args != '' || inputs.build_contexts != '')
+        if: github.ref != inputs.push_ref
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: ${{ inputs.context }}
@@ -292,28 +279,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push
-        if: >-
-          github.ref == inputs.push_ref
-          && inputs.target == ''
-          && inputs.build_args == ''
-          && inputs.build_contexts == ''
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image_repo }}:latest
-            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
-            ${{ steps.meta.outputs.image_repo }}:${{ steps.version.outputs.new_version }}
-          labels: ${{ steps.oci.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push (BuildKit options)
-        if: >-
-          github.ref == inputs.push_ref
-          && (inputs.target != '' || inputs.build_args != '' || inputs.build_contexts != '')
+        if: github.ref == inputs.push_ref
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: ${{ inputs.context }}
@@ -332,7 +298,7 @@ jobs:
 
       - name: Trivy image scan
         if: github.ref == inputs.push_ref && inputs.trivy_scan && vars.CI_G_TRIVY_IMAGE_ENABLED != 'false'
-        uses: synkube/actions/.github/actions/trivy-image@e3651ac1ff9fe4a48a0301f97ca4827a4a853918
+        uses: synkube/actions/.github/actions/trivy-image@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
         with:
           image-ref: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
           project-name: ${{ steps.meta.outputs.label_name }}

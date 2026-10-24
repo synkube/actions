@@ -89,7 +89,7 @@ jobs:
           fi
 
       - name: Run KICS scan
-        uses: synkube/actions/.github/actions/kics-github-action@9f425ac79ec75ce388b4e27528784a095a272584 # v1.0.0
+        uses: synkube/actions/.github/actions/kics-github-action@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34 # v1.0.0
         with:
           path: ${{ inputs.scan_path }}
           token: ${{ secrets.GITHUB_TOKEN }}
