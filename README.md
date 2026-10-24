@@ -43,7 +43,9 @@ jobs:
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
 
-ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree. Composite actions use the same static SHA inside the reusable workflow (expressions are not allowed in cross-repo `uses:` refs; `github.workflow_sha` is the caller workflow, not this repo).
+Reusable workflows that call composites in this repo (`deploy`, `docker-build-push`, `argocd-diff-workload`, …) must pin those composites to the **same commit SHA** callers use for the workflow `uses:` line. GitHub does not allow `${{ github.workflow_sha }}` for cross-repo `uses:` (that is the caller workflow, not `synkube/actions`). On each release, bump the workflow SHA in consumer repos and the matching composite refs inside the workflow file in this repo to that release commit.
+
+ArgoCD diff for enterprise workload repos (co-located `apps/`). Pin **`uses`** to a commit SHA of this repo. Layout (`single` vs `multi`) is inferred from the `apps/` tree.
 
 ```yaml
 jobs:

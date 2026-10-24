@@ -4,6 +4,9 @@
 # Prefer inputs.version from the docker-build-push job output in the same workflow run.
 # tag_prefix resolves latest git tag on the caller repo and can race when multiple workflows
 # share a prefix (e.g. ci + ci-multi both using api/v).
+#
+# Composite actions: pin to the same synkube/actions SHA as callers use for this workflow.
+# Update composite action refs below when action code changes (see README.md).
 name: Deploy
 
 on:
@@ -178,7 +181,7 @@ jobs:
 
       - name: Exchange OIDC for GitOps token
         id: token
-        uses: synkube/actions/.github/actions/jwt-exchange@71e9b53824e289e5947d5f072f3f8e6f79946c54
+        uses: synkube/actions/.github/actions/jwt-exchange@5e465bd0aa2e8447b1ca343fa45999376679ea69
         with:
           jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
           target_repo: ${{ inputs.gitops_repo }}
@@ -186,7 +189,7 @@ jobs:
 
       - name: Bump GitOps values
         id: bump
-        uses: synkube/actions/.github/actions/gitops-bump@71e9b53824e289e5947d5f072f3f8e6f79946c54
+        uses: synkube/actions/.github/actions/gitops-bump@5e465bd0aa2e8447b1ca343fa45999376679ea69
         with:
           token: ${{ steps.token.outputs.token }}
           gitops_repo: ${{ inputs.gitops_repo }}
