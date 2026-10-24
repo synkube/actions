@@ -181,7 +181,7 @@ jobs:
       - name: Exchange OIDC for extra repository
         if: inputs.extra_repository != ''
         id: extra-token
-        uses: synkube/actions/.github/actions/jwt-exchange@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
+        uses: synkube/actions/.github/actions/jwt-exchange@59644552478df89e4431496f5d58924515af99d5
         with:
           jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
           target_repo: ${{ inputs.extra_repository }}
@@ -298,7 +298,7 @@ jobs:
 
       - name: Trivy image scan
         if: github.ref == inputs.push_ref && inputs.trivy_scan && vars.CI_G_TRIVY_IMAGE_ENABLED != 'false'
-        uses: synkube/actions/.github/actions/trivy-image@a2fcf0f9ba3d0cf7a17fe044823a120665b2bf34
+        uses: synkube/actions/.github/actions/trivy-image@59644552478df89e4431496f5d58924515af99d5
         with:
           image-ref: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.sha }}
           project-name: ${{ steps.meta.outputs.label_name }}
