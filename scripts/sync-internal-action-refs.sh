@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Point synkube/actions composite refs inside reusable workflows at the current
-# commit (release discipline). Run from repo root before tagging a release.
+# Point synkube/actions composite refs inside reusable workflows at HEAD.
+# Run after the release commit exists (do not amend after syncing without
+# re-running this script on the final commit). Commit the diff, then tag.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
