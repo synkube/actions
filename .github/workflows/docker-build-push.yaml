@@ -31,19 +31,16 @@
 #   target: from-context
 #   build_contexts: |
 #     broker=broker-src/clients
-#   extra_repository: synkube/agent-github-broker
+#   extra_repository: owner/repo
 #   extra_ref: <sha>
-#   extra_path: agent-github-broker
-#   (extra checkout uses jwt-exchange — caller OPA policy must allow source → target)
+#   extra_path: checkout-dir
+#   secrets.extra_checkout_token: read token for extra_repository when it is private
 #   build_args: |
-#     BROKER_CLIENTS_IMAGE=ghcr.io/synkube/agent-github-broker/clients:0.0.1
-#
-# Pair each image with its own deploy.yaml call (managed_key + version from docker job output).
+#     BROKER_CLIENTS_IMAGE=ghcr.io/example/clients:0.0.1
 #
 # Caller job permissions (required on the job that `uses:` this workflow):
 #   contents: write
 #   packages: write
-#   id-token: write   # job requests OIDC when extra_repository is set; callers must grant it or startup fails
 #
 # Composite actions: pin to the same synkube/actions SHA as callers use for this workflow.
 # Run scripts/sync-internal-action-refs.sh before tagging a release (see README.md).
@@ -138,11 +135,10 @@ on:
         required: false
         type: string
         default: ""
-      jwt_exchange_url:
-        description: jwt-exchange base URL for cross-repo extra checkout
+    secrets:
+      extra_checkout_token:
+        description: Read token for extra_repository. Required when that repository is private.
         required: false
-        type: string
-        default: https://jwt-exchange.synkube.com
     outputs:
       image_repo:
         description: ghcr.io/owner/repo/image_name (no tag)
@@ -168,7 +164,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-      id-token: write
     outputs:
       image_repo: ${{ steps.meta.outputs.image_repo }}
       version: ${{ steps.version.outputs.new_version || '' }}
@@ -178,22 +173,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Exchange OIDC for extra repository
-        if: inputs.extra_repository != ''
-        id: extra-token
-        uses: synkube/actions/.github/actions/jwt-exchange@59644552478df89e4431496f5d58924515af99d5
-        with:
-          jwt_exchange_url: ${{ inputs.jwt_exchange_url }}
-          target_repo: ${{ inputs.extra_repository }}
-          requested_permissions: '{"contents":"read","metadata":"read"}'
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: inputs.extra_repository != ''
         with:
           repository: ${{ inputs.extra_repository }}
           ref: ${{ inputs.extra_ref }}
           path: ${{ inputs.extra_path }}
-          token: ${{ steps.extra-token.outputs.token }}
+          token: ${{ secrets.extra_checkout_token != '' && secrets.extra_checkout_token || github.token }}
 
       - name: Registry metadata
         id: meta

@@ -6,8 +6,6 @@ Reusable GitHub Actions for the synkube organization.
 
 | Path | Description |
 | --- | --- |
-| [.github/actions/gitops-bump](.github/actions/gitops-bump) | Bump `# github-workflow-managed` Helm values in a GitOps repo (push or pull request; used by [Deploy workflow](.github/workflows/deploy.yaml)) |
-| [.github/actions/jwt-exchange](.github/actions/jwt-exchange) | Exchange GitHub Actions OIDC for a short-lived GitHub App installation token via [synkube/jwt-exchange](https://github.com/synkube/jwt-exchange) (`/api/v2/exchange/token`, bash composite) |
 | [.github/actions/kics-github-action](.github/actions/kics-github-action) | [KICS](https://kics.io/) static analysis for Infrastructure as Code (fork of [Checkmarx/kics-github-action](https://github.com/Checkmarx/kics-github-action) with a digest-pinned KICS engine image) |
 | [.github/actions/trivy-fs](.github/actions/trivy-fs) | Trivy filesystem (dependency) scan with optional SARIF upload to GHAS |
 | [.github/actions/trivy-image](.github/actions/trivy-image) | Trivy container image scan with optional SARIF upload to GHAS |
@@ -16,7 +14,6 @@ Reusable GitHub Actions for the synkube organization.
 
 | Path | Description |
 | --- | --- |
-| [.github/workflows/deploy.yaml](.github/workflows/deploy.yaml) | Reusable GitOps deploy — OIDC exchange + bump `# github-workflow-managed` values + push or PR |
 | [.github/workflows/docker-build-push.yaml](.github/workflows/docker-build-push.yaml) | Reusable Docker build — GHCR push on main, semver git tag, optional Trivy image scan (see caller permissions below) |
 | [.github/workflows/kics-scan.yaml](.github/workflows/kics-scan.yaml) | Reusable KICS IaC scan (digest-pinned engine, optional SARIF) |
 | [.github/workflows/argocd-diff-workload.yaml](.github/workflows/argocd-diff-workload.yaml) | Reusable ArgoCD diff preview for co-located workload repos (`apps/` + `charts/` + `workloads/`) |
@@ -43,16 +40,17 @@ jobs:
     uses: synkube/actions/.github/workflows/kics-scan.yaml@<sha>
 ```
 
-Reusable workflows that call composites in this repo (`deploy`, `docker-build-push`, `argocd-diff-workload`, …) must pin those composites to the **same commit SHA** callers use for the workflow `uses:` line. GitHub does not allow `${{ github.workflow_sha }}` for cross-repo `uses:` (that is the caller workflow, not `synkube/actions`). Before tagging a release, run `scripts/sync-internal-action-refs.sh` and commit any diff so internal composite refs match `HEAD`.
+Reusable workflows that call composites in this repo (`docker-build-push`, `argocd-diff-workload`, `kics-scan`) must pin those composites to the **same commit SHA** callers use for the workflow `uses:` line. GitHub does not allow `${{ github.workflow_sha }}` for cross-repo `uses:` (that is the caller workflow, not `synkube/actions`). Before tagging a release, run `scripts/sync-internal-action-refs.sh` and commit any diff so internal composite refs match `HEAD`.
 
 ### Caller job permissions (reusable workflows)
 
-Nested workflows cannot escalate `GITHUB_TOKEN` / OIDC beyond what the **calling job** grants. If the caller sets `jobs.<id>.permissions` without `id-token: write`, unlisted scopes default to `none` and GitHub fails the run at **startup** when the called workflow’s job requests `id-token: write`.
+Nested workflows cannot escalate `GITHUB_TOKEN` beyond what the **calling job** grants. Set `permissions` on the calling job to the scopes in the table. Unlisted scopes default to `none`.
 
 | Called workflow | Grant on the calling job |
 | --- | --- |
-| `deploy.yaml` | `contents: read`, `id-token: write` |
-| `docker-build-push.yaml` | `contents: write`, `packages: write`, `id-token: write` |
+| `docker-build-push.yaml` | `contents: write`, `packages: write` |
+
+Pass `secrets.extra_checkout_token` when `extra_repository` is a private repository.
 
 Example (docker job):
 
@@ -61,7 +59,6 @@ Example (docker job):
     permissions:
       contents: write
       packages: write
-      id-token: write
     uses: synkube/actions/.github/workflows/docker-build-push.yaml@<sha>
     secrets: inherit
 ```
@@ -84,7 +81,7 @@ No AWS or cluster credentials are required; rendering runs in the `argocd-diff-p
 
 ### Multiple images (one job per image)
 
-Each image gets its own matrix row; GitHub runs one reusable-workflow job per row in parallel. Pair each row with a matching `deploy.yaml` call (`tag_prefix` + `managed_key`).
+Each image gets its own matrix row; GitHub runs one reusable-workflow job per row in parallel.
 
 ```yaml
 jobs:
@@ -113,17 +110,6 @@ jobs:
       context: ${{ matrix.context }}
       tag_prefix: ${{ matrix.tag_prefix }}
     secrets: inherit
-
-  deploy-api:
-    needs: docker
-    if: github.ref == 'refs/heads/main'
-    uses: synkube/actions/.github/workflows/deploy.yaml@<sha>
-    with:
-      tag_prefix: api/v
-      managed_key: api.tag
-      values_path: values/.../my-service.yaml
-      github_environment: prod
-    secrets: inherit
 ```
 
-Repos with path-filtered builds (e.g. jwt-exchange) should build a filtered `matrix.include` JSON in an upstream job rather than encoding dockerfile paths in `with:` expressions.
+Repos with path-filtered builds should build a filtered `matrix.include` JSON in an upstream job rather than encoding dockerfile paths in `with:` expressions.
